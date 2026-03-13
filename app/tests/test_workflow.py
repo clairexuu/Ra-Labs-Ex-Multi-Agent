@@ -5,6 +5,7 @@ from agno.team import Team
 
 from app.agents.analyst import create_analyst_agent
 from app.agents.critic import create_critic_agent
+from app.agents.decision import create_decision_agent
 from app.agents.research import create_research_agent
 from app.team.investment_team import create_investment_team
 
@@ -26,10 +27,15 @@ class TestAgentCreation:
         assert isinstance(agent, Agent)
         assert agent.name == "Critic Agent"
 
+    def test_decision_agent_creates_successfully(self):
+        agent = create_decision_agent()
+        assert isinstance(agent, Agent)
+        assert agent.name == "Decision Agent"
+
 
 class TestTeamCreation:
     def test_investment_team_creates_successfully(self):
         team = create_investment_team()
         assert isinstance(team, Team)
         assert team.name == "Investment Team"
-        assert len(team.members) == 3
+        assert len(team.members) == 4

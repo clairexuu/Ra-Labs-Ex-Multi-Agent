@@ -20,24 +20,38 @@ A multi-agent investment analysis system built with [Agno](https://github.com/ag
                             ▼
                    ┌──────────────┐
                    │Research Agent │  Specialist #1
-                   │ DuckDuckGo + │  Financial data + news +
+                   │ Tavily +     │  Financial data + news +
                    │ YFinance     │  risk-relevant info
                    └──────┬───────┘
                           │
-         Step 2: Delegate to Analyst + Critic
+         Step 2: Delegate to Analyst
                           │
-                ┌─────────┴─────────┐
-                ▼                   ▼
-        ┌──────────────┐   ┌──────────────┐
-        │ Analyst Agent │   │ Critic/Risk  │
-        │ Specialist #2 │   │   Agent      │
-        │ Comparative   │   │ Specialist #3│
-        │ analysis      │   │ Risks +      │
-        │               │   │ challenges   │
-        └───────┬───────┘   └──────┬───────┘
-                └────────┬─────────┘
-                         │
-         Step 3: Coordinator synthesizes
+                          ▼
+                 ┌──────────────┐
+                 │ Analyst Agent │  Specialist #2
+                 │ Comparative   │  Strengths, weaknesses,
+                 │ analysis      │  valuation, top pick
+                 └──────┬───────┘
+                        │
+         Step 3: Delegate to Critic
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │ Critic/Risk  │  Specialist #3
+                 │   Agent      │  Risks, assumptions,
+                 │              │  contrarian view
+                 └──────┬───────┘
+                        │
+         Step 4: Delegate to Decision
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │Decision Agent│  Specialist #4
+                 │ BUY/HOLD/SELL│  Weighs analysis vs risks,
+                 │ decisions    │  top pick, thesis
+                 └──────┬───────┘
+                        │
+         Step 5: Coordinator synthesizes
                  final investment memo
 ```
 
@@ -46,13 +60,14 @@ A multi-agent investment analysis system built with [Agno](https://github.com/ag
 | Agent | Role | Tools |
 |-------|------|-------|
 | **Investment Committee Lead** (coordinator) | Orchestrates workflow, synthesizes final memo | None (orchestration) |
-| **Research Agent** (specialist #1) | Comprehensive data gathering: financials, news, negative news | DuckDuckGo, YFinance |
+| **Research Agent** (specialist #1) | Comprehensive data gathering: financials, news, negative news | Tavily, YFinance |
 | **Analyst Agent** (specialist #2) | Comparative financial analysis: strengths, weaknesses, valuation | None (reasoning) |
 | **Critic/Risk Agent** (specialist #3) | Risk assessment, challenges assumptions, contrarian view | None (reasoning) |
+| **Decision Agent** (specialist #4) | BUY/HOLD/SELL decisions, weighs analysis vs risks, top pick | None (reasoning) |
 
 ### Tools Used
 
-1. **DuckDuckGoTools** - Web search for company news, products, competitive position, lawsuits, regulatory issues
+1. **TavilyTools** - Web search for company news, products, competitive position, lawsuits, regulatory issues
 2. **YFinanceTools** - Stock prices, market cap, analyst recommendations, company info, financial news
 
 ## Setup
@@ -106,10 +121,11 @@ app/
     research.py              # Research Agent definition
     analyst.py               # Analyst Agent definition
     critic.py                # Critic/Risk Agent definition
+    decision.py              # Decision Agent definition
   team/
     investment_team.py       # Team with coordinator
   tools/
-    search.py                # DuckDuckGo tool config
+    search.py                # Tavily tool config
     finance.py               # YFinance tool config
   tests/
     test_schemas.py          # Pydantic model tests
@@ -126,6 +142,7 @@ All agent inputs and outputs use Pydantic models defined in `app/models/schemas.
 - **CompanyResearch** / **CompanyResearchSet** - Research Agent output (financial data, news, negative news per company)
 - **FinancialAnalysis** / **CompanyAnalysis** - Analyst Agent output (strengths, weaknesses, valuation, growth outlook)
 - **RiskAssessment** / **RiskFactor** - Critic Agent output (categorized risks, challenged assumptions, contrarian view)
+- **InvestmentDecision** / **CompanyDecision** - Decision Agent output (BUY/HOLD/SELL per company, top pick, investment thesis)
 
 ## Resilience
 
@@ -137,7 +154,7 @@ All agent inputs and outputs use Pydantic models defined in `app/models/schemas.
 - **Sequential execution in coordinate mode**: Analyst and Critic agents run sequentially (not truly parallel) in Agno's coordinate mode. Both receive the Research Agent's output via shared interactions.
 - **Model choice**: Gemini 2.0 Flash is used for cost efficiency. Can be swapped to a more capable model via the `MODEL_ID` env var.
 - **No persistent storage**: Sessions are stored in SQLite locally. No PostgreSQL setup required for the demo.
-- **Tool limitations**: YFinance data can be delayed or incomplete for some tickers. DuckDuckGo search results vary by region and time.
+- **Tool limitations**: YFinance data can be delayed or incomplete for some tickers. Tavily search results vary by region and time.
 
 ## Build Notes
 
@@ -145,4 +162,4 @@ All agent inputs and outputs use Pydantic models defined in `app/models/schemas.
 - AI tools helped most with: Agno API discovery (the framework's actual parameter names differ from documentation examples), project scaffolding, and Pydantic model design
 - Manual debugging required for: Agno API mismatches (`response_model` vs `output_schema`, `stock_price` vs `enable_stock_price`, `leader` not being a valid Team param, `show_tool_calls` not valid on Agent)
 - Iterated on architecture based on requirements review: started with manual orchestration, pivoted to Agno Team coordinate mode with Playground UI
-- Kept scope tight: 4 agents, 2 tools, typed state, Playground demo - per the "do not overbuild" guidance
+- Kept scope tight: 5 agents (1 coordinator + 4 specialists), 2 tools, typed state, Playground demo - per the "do not overbuild" guidance

@@ -4,9 +4,11 @@ import pytest
 
 from app.models.schemas import (
     CompanyAnalysis,
+    CompanyDecision,
     CompanyResearch,
     CompanyResearchSet,
     FinancialAnalysis,
+    InvestmentDecision,
     RiskAssessment,
     RiskFactor,
 )
@@ -114,3 +116,45 @@ class TestRiskAssessment:
         assert len(parsed.risks) == 1
         assert parsed.risks[0].severity == "medium"
         assert parsed.overall_confidence == "medium"
+
+
+class TestInvestmentDecision:
+    def test_serialization(self):
+        decision = InvestmentDecision(
+            sector="Semiconductors",
+            company_decisions=[
+                CompanyDecision(
+                    ticker="NVDA",
+                    recommendation="BUY",
+                    confidence="high",
+                    reasoning="Market leader in AI with strong revenue growth; risks are manageable",
+                ),
+                CompanyDecision(
+                    ticker="AMD",
+                    recommendation="HOLD",
+                    confidence="medium",
+                    reasoning="Solid competitor but valuation risk and market share uncertainty",
+                ),
+            ],
+            top_pick="NVDA",
+            top_pick_justification=(
+                "NVIDIA's dominant AI chip position and 122% revenue growth "
+                "justify its premium valuation. While antitrust scrutiny is a risk, "
+                "the AI spending tailwind outweighs near-term concerns."
+            ),
+            investment_thesis=(
+                "The semiconductor sector is driven by AI infrastructure demand. "
+                "NVIDIA leads with best-in-class GPUs, while AMD offers a value alternative."
+            ),
+            key_conditions=[
+                "AI infrastructure spending slowdown",
+                "Antitrust regulatory action against NVIDIA",
+                "AMD gaining significant data center market share",
+            ],
+        )
+        json_str = decision.model_dump_json()
+        parsed = InvestmentDecision.model_validate_json(json_str)
+        assert parsed.top_pick == "NVDA"
+        assert len(parsed.company_decisions) == 2
+        assert parsed.company_decisions[0].recommendation == "BUY"
+        assert len(parsed.key_conditions) == 3

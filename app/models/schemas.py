@@ -100,3 +100,46 @@ class RiskAssessment(BaseModel):
         ...,
         description="high, medium, or low confidence in the analysis",
     )
+
+
+class CompanyDecision(BaseModel):
+    """Investment decision for a single company."""
+
+    ticker: str = Field(..., description="Stock ticker symbol")
+    recommendation: str = Field(
+        ...,
+        description="Investment recommendation: BUY, HOLD, or SELL",
+    )
+    confidence: str = Field(
+        ...,
+        description="Confidence in the recommendation: high, medium, or low",
+    )
+    reasoning: str = Field(
+        ...,
+        description="Brief reasoning for the recommendation, weighing analysis against risks",
+    )
+
+
+class InvestmentDecision(BaseModel):
+    """Structured investment decision produced by the Decision Agent."""
+
+    sector: str = Field(..., description="Sector analyzed")
+    company_decisions: list[CompanyDecision] = Field(
+        ..., description="BUY/HOLD/SELL decision for each company"
+    )
+    top_pick: str = Field(
+        ..., description="Ticker of the overall top pick"
+    )
+    top_pick_justification: str = Field(
+        ...,
+        description="Full justification for the top pick, incorporating both "
+        "the analyst's case and the critic's concerns",
+    )
+    investment_thesis: str = Field(
+        ...,
+        description="2-3 sentence summary of the overall investment thesis for the sector",
+    )
+    key_conditions: list[str] = Field(
+        ...,
+        description="Conditions or catalysts that could change these recommendations",
+    )
