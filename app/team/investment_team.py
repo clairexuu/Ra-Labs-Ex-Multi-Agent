@@ -6,6 +6,12 @@ from app.agents.critic import create_critic_agent
 from app.agents.decision import create_decision_agent
 from app.agents.research import create_research_agent
 from app.config import get_model
+from app.observability import (
+    log_team_metrics,
+    on_agent_completed,
+    on_agent_started,
+    on_workflow_started,
+)
 
 
 def create_investment_team() -> Team:
@@ -33,6 +39,11 @@ def create_investment_team() -> Team:
     analyst_agent = create_analyst_agent()
     critic_agent = create_critic_agent()
     decision_agent = create_decision_agent()
+
+    # Attach real-time observability hooks to each agent
+    for agent in [research_agent, analyst_agent, critic_agent, decision_agent]:
+        agent.pre_hooks = [on_agent_started]
+        agent.post_hooks = [on_agent_completed]
 
     return Team(
         name="Investment Team",
@@ -89,4 +100,6 @@ def create_investment_team() -> Team:
         show_members_responses=False,
         share_member_interactions=True,
         markdown=True,
+        pre_hooks=[on_workflow_started],
+        post_hooks=[log_team_metrics],
     )

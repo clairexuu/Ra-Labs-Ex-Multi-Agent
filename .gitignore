@@ -27,5 +27,8 @@ tmp/
 # Output
 data/output/
 
+# Observability logs
+logs/
+
 # agent ui
 agent-ui
