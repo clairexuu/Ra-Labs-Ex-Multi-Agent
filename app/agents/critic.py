@@ -7,8 +7,9 @@ from app.models.schemas import RiskAssessment
 def create_critic_agent() -> Agent:
     """Create the Critic/Risk Agent (Specialist #3).
 
-    Reviews research data and the analyst's work to identify risks,
-    challenge assumptions, and provide a contrarian perspective.
+    Reviews research data to identify risks, challenge assumptions,
+    and provide a contrarian perspective.  Runs in parallel with the
+    Analyst Agent (does not depend on analysis output).
     No tools needed - pure critical reasoning.
     """
     return Agent(

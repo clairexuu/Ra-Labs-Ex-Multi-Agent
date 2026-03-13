@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project implements the **Investment Team** track of the Agno multi-agent take-home exercise. The system uses 5 AI agents (1 coordinator + 4 specialists) orchestrated via an Agno Team in **coordinate mode** to research companies, analyze financials, assess risks, make investment decisions, and produce a final investment recommendation memo. The demo runs through the **Agno Playground UI**.
+This project implements the **Investment Team** track of the Agno multi-agent take-home exercise. The system uses 5 AI agents (1 coordinator + 4 specialists) orchestrated via an Agno Team in **coordinate mode** to research companies, analyze financials, assess risks, make investment decisions, and produce a final investment recommendation memo. The Analyst and Critic agents run **concurrently** via a nested broadcast sub-team. The demo runs through the **Agno Playground UI**.
 
 ## Architecture
 
@@ -25,34 +25,31 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
                    │ YFinance     │  + risk-relevant info
                    └──────┬───────┘
                           │
-         Step 2: Delegate to Analyst
+         Step 2: Delegate to Analysis Team (broadcast)
+                          │
+               ┌──────────┴──────────┐
+               │                     │  (concurrent)
+               ▼                     ▼
+      ┌──────────────┐      ┌──────────────┐
+      │ Analyst Agent │      │ Critic/Risk  │
+      │ Comparative   │      │   Agent      │  Specialist #2 + #3
+      │ analysis      │      │ Risks,       │  Run in parallel via
+      │               │      │ assumptions, │  broadcast sub-team
+      │               │      │ contrarian   │
+      └──────┬────────┘      └──────┬───────┘
+               │                     │
+               └──────────┬──────────┘
+                          │
+         Step 3: Delegate to Decision
                           │
                           ▼
-                 ┌──────────────┐
-                 │ Analyst Agent │  Specialist #2
-                 │ Comparative   │  Strengths, weaknesses,
-                 │ analysis      │  valuation, top pick
-                 └──────┬───────┘
-                        │
-         Step 3: Delegate to Critic
-                        │
-                        ▼
-                 ┌──────────────┐
-                 │ Critic/Risk  │  Specialist #3
-                 │   Agent      │  Risks, assumptions,
-                 │              │  contrarian view
-                 └──────┬───────┘
-                        │
-         Step 4: Delegate to Decision
-                        │
-                        ▼
                  ┌──────────────┐
                  │Decision Agent│  Specialist #4
                  │ BUY/HOLD/SELL│  Weighs analysis vs risks,
                  │ decisions    │  top pick, thesis
                  └──────┬───────┘
                         │
-         Step 5: Coordinator collects all outputs
+         Step 4: Coordinator collects all outputs
                  and composes final investment memo
 ```
 
@@ -62,25 +59,25 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
 |-------------|-------|-------------|
 | 1 coordinating agent | **Investment Committee Lead** (Team coordinator) | Orchestrates the workflow sequence, collects all specialist outputs, and synthesizes the final investment memo |
 | Specialist #1 | **Research Agent** | Comprehensive data gathering using Tavily (web search) and YFinance (financial data). Collects general info, financials, news, and negative news for all downstream agents |
-| Specialist #2 | **Analyst Agent** | Pure-reasoning agent that produces comparative financial analysis from the research data: strengths, weaknesses, valuation assessment, growth outlook, and top pick |
-| Specialist #3 | **Critic/Risk Agent** | Pure-reasoning agent that identifies risks, challenges assumptions, finds data gaps, and provides a contrarian argument based on the research data |
+| Specialist #2 | **Analyst Agent** | Pure-reasoning agent that produces comparative financial analysis from the research data: strengths, weaknesses, valuation assessment, growth outlook, and top pick. Runs concurrently with Critic via broadcast sub-team |
+| Specialist #3 | **Critic/Risk Agent** | Pure-reasoning agent that identifies risks, challenges assumptions, finds data gaps, and provides a contrarian argument based on the research data. Runs concurrently with Analyst via broadcast sub-team |
 | Specialist #4 | **Decision Agent** | Pure-reasoning agent that synthesizes the Analyst's findings and Critic's risks into explicit BUY/HOLD/SELL decisions for each company, identifies the top pick, and states the investment thesis |
 | 1 output/review step | **Investment Committee Lead** | Same coordinator agent collects all outputs and composes the structured final memo |
 
 ### Execution Flow
 
 1. **Research** — Coordinator delegates to Research Agent, which uses Tavily + YFinance tools to gather comprehensive data on each company (general info, financials, news, negative news/lawsuits/regulatory issues)
-2. **Analysis** — Coordinator delegates to Analyst Agent, which receives the research data (via `share_member_interactions=True`) and produces a typed `FinancialAnalysis` with per-company strengths/weaknesses/valuation/growth and a top pick
-3. **Risk Review** — Coordinator delegates to Critic Agent, which receives the research data and produces a typed `RiskAssessment` with categorized risks, challenged assumptions, data gaps, and a contrarian view
-4. **Decision** — Coordinator delegates to Decision Agent, which receives the financial analysis and risk assessment (via `share_member_interactions=True`) and produces a typed `InvestmentDecision` with per-company BUY/HOLD/SELL recommendations, top pick, investment thesis, and key conditions
-5. **Final Memo** — Coordinator synthesizes all specialist outputs into a markdown investment memo, using the Decision Agent's recommendations as the basis for the Investment Decisions and Top Pick sections
+2. **Parallel Analysis** — Coordinator delegates to the Analysis Team (a `TeamMode.broadcast` sub-team), which runs Analyst Agent and Critic Agent **concurrently**. Both receive the research data (via `share_member_interactions=True` on the outer team) and produce their specialized outputs in parallel: `FinancialAnalysis` and `RiskAssessment`
+3. **Decision** — Coordinator delegates to Decision Agent, which receives the combined financial analysis and risk assessment (via `share_member_interactions=True`) and produces a typed `InvestmentDecision` with per-company BUY/HOLD/SELL recommendations, top pick, investment thesis, and key conditions
+4. **Final Memo** — Coordinator synthesizes all specialist outputs into a markdown investment memo, using the Decision Agent's recommendations as the basis for the Investment Decisions and Top Pick sections
 
-### Why Agno Team Coordinate Mode
+### Why Agno Team Coordinate Mode + Nested Broadcast
 
 - The Team coordinator acts as the **coordinating agent** and the **output/review step**, while 4 specialists handle research, analysis, risk review, and decision-making
-- `mode="coordinate"` — the coordinator orchestrates which member to call and in what order
-- `share_member_interactions=True` — each specialist sees the outputs of prior specialists, so the Analyst and Critic both have access to the Research Agent's data
-- `show_members_responses=True` — each specialist's work is displayed in the Playground UI
+- `mode="coordinate"` on the outer team — the coordinator orchestrates which member to call and in what order
+- `mode="broadcast"` on the Analysis Team sub-team — Analyst and Critic receive the same task and run **concurrently** (via `asyncio.gather()` in the async path used by the Playground)
+- `share_member_interactions=True` on the outer team — each step sees the outputs of prior steps, so the Analysis Team receives the Research Agent's data and the Decision Agent receives all prior outputs
+- `share_member_interactions=False` on the Analysis Team — Analyst and Critic work independently from the same research data
 
 ## Tools
 
@@ -216,7 +213,7 @@ Enter this in the Playground chat:
 
 > Analyze NVDA, AMD, and INTC in the Semiconductors sector and produce an investment memo
 
-The coordinator will delegate to Research → Analyst → Critic, then synthesize the final memo. Each specialist's work is visible in the UI.
+The coordinator will delegate to Research → Analysis Team (Analyst + Critic in parallel) → Decision, then synthesize the final memo. Each specialist's work is visible in the UI.
 
 ### Run Tests
 
@@ -224,7 +221,7 @@ The coordinator will delegate to Research → Analyst → Critic, then synthesiz
 pytest app/tests/ -v
 ```
 
-Expected: 11 tests pass (6 schema tests + 5 agent/team creation tests).
+Expected: 25 tests pass (6 schema tests + 6 agent/team creation tests + 13 observability tests).
 
 ## Implementation Notes
 
@@ -240,7 +237,7 @@ Expected: 11 tests pass (6 schema tests + 5 agent/team creation tests).
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Orchestration | Agno Team coordinate mode | Satisfies "real multi-agent pattern" requirement; coordinator is a genuine agent, not just Python glue code |
+| Orchestration | Agno Team coordinate mode + nested broadcast sub-team | Satisfies "real multi-agent pattern" requirement; coordinator is a genuine agent. Analyst + Critic run concurrently via a broadcast sub-team for reduced latency |
 | Model | Gemini 2.0 Flash | Free tier available, fast, good structured output support. Swappable via `MODEL_ID` env var |
 | Tools | Tavily + YFinance only | Exercise says 2-4 tools; these cover web search + financial data. Research Agent gathers all data for downstream agents |
 | Tool placement | Both tools on Research Agent only | Research Agent is the single data-gathering step. Analyst and Critic do pure reasoning on the research data |

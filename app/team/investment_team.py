@@ -15,25 +15,24 @@ from app.observability import (
 
 
 def create_investment_team() -> Team:
-    """Create the Investment Team with a coordinating leader and 4 specialists.
-
-    The Team itself acts as the coordinating agent (Investment Committee Lead).
-    It delegates to 4 specialist member agents and synthesizes the final memo.
+    """Create the Investment Team with a coordinating leader, a parallel
+    analysis sub-team, and specialist agents.
 
     Architecture:
         - Team coordinator (Investment Committee Lead): Orchestrates the workflow
           and synthesizes the final investment memo (coordinator + output/review)
         - Research Agent (Specialist #1): Comprehensive data gathering
-        - Analyst Agent (Specialist #2): Comparative financial analysis
-        - Critic Agent (Specialist #3): Risk assessment and contrarian review
+        - Analysis Team (broadcast sub-team): Runs Analyst + Critic in parallel
+            - Analyst Agent (Specialist #2): Comparative financial analysis
+            - Critic Agent (Specialist #3): Risk assessment and contrarian review
         - Decision Agent (Specialist #4): BUY/HOLD/SELL decisions
 
     Execution flow:
         1. Coordinator delegates to Research Agent for data gathering
-        2. Coordinator delegates to Analyst Agent for financial analysis
-        3. Coordinator delegates to Critic Agent for risk assessment
-        4. Coordinator delegates to Decision Agent for investment decisions
-        5. Coordinator synthesizes all outputs into the final investment memo
+        2. Coordinator delegates to Analysis Team (broadcast), which runs
+           Analyst Agent and Critic Agent concurrently
+        3. Coordinator delegates to Decision Agent for investment decisions
+        4. Coordinator synthesizes all outputs into the final investment memo
     """
     research_agent = create_research_agent()
     analyst_agent = create_analyst_agent()
@@ -45,11 +44,36 @@ def create_investment_team() -> Team:
         agent.pre_hooks = [on_agent_started]
         agent.post_hooks = [on_agent_completed]
 
+    # Broadcast sub-team: runs Analyst + Critic concurrently.
+    # Both receive the same delegated task (enriched with Research output
+    # via the outer team's share_member_interactions) and produce their
+    # specialized outputs in parallel.
+    analysis_team = Team(
+        name="Analysis Team",
+        mode=TeamMode.broadcast,
+        model=get_model(),
+        members=[analyst_agent, critic_agent],
+        description=(
+            "Parallel analysis sub-team that runs financial analysis and risk "
+            "assessment simultaneously. Delegates the research data to both "
+            "the Analyst Agent and Critic Agent, then returns their outputs."
+        ),
+        instructions=[
+            "You coordinate a parallel analysis of research data.",
+            "When you receive research data and a task, broadcast it to both members.",
+        ],
+        respond_directly=True,
+        share_member_interactions=False,
+        show_members_responses=False,
+        stream_member_events=False,
+        markdown=False,
+    )
+
     return Team(
         name="Investment Team",
         mode=TeamMode.coordinate,
         model=get_model(),
-        members=[research_agent, analyst_agent, critic_agent, decision_agent],
+        members=[research_agent, analysis_team, decision_agent],
         description=(
             "An investment analysis team that researches and evaluates "
             "companies to produce investment recommendation memos."
@@ -63,24 +87,23 @@ def create_investment_team() -> Team:
             "Ask the Research Agent to research each company's financials, news, products,",
             "competitive position, and any negative news (lawsuits, regulatory issues, etc).",
             "",
-            "STEP 2 - ANALYSIS:",
-            "After receiving the research data, delegate to the Analyst Agent.",
-            "Ask the Analyst Agent to produce a comparative financial analysis",
-            "based on the research data, including strengths, weaknesses, valuation,",
-            "and growth outlook for each company, with a top pick recommendation.",
+            "STEP 2 - PARALLEL ANALYSIS:",
+            "After receiving the research data, delegate to the Analysis Team.",
+            "The Analysis Team will run the Analyst Agent and Critic Agent in parallel.",
+            "Ask it to analyze the research data: the Analyst should produce a comparative",
+            "financial analysis with strengths, weaknesses, valuation, growth outlook, and",
+            "a top pick; the Critic should identify risks, challenge assumptions, find data",
+            "gaps, and provide a contrarian view.",
+            "Include the full research data in your delegation so both agents can access it.",
             "",
-            "STEP 3 - RISK REVIEW:",
-            "After receiving the analysis, delegate to the Critic Agent.",
-            "Ask the Critic Agent to identify risks, challenge assumptions,",
-            "and provide a contrarian view based on the research data.",
-            "",
-            "STEP 4 - DECISION:",
-            "After receiving the risk review, delegate to the Decision Agent.",
+            "STEP 3 - DECISION:",
+            "After receiving the combined analysis and risk assessment from the Analysis Team,",
+            "delegate to the Decision Agent.",
             "Ask the Decision Agent to weigh the analyst's findings against the",
             "critic's risks and produce explicit BUY/HOLD/SELL decisions for each",
             "company, along with the overall top pick and investment thesis.",
             "",
-            "STEP 5 - FINAL MEMO:",
+            "STEP 4 - FINAL MEMO:",
             "After receiving all specialist outputs, synthesize everything into",
             "a comprehensive investment memo in markdown format with these sections:",
             "",
@@ -98,6 +121,7 @@ def create_investment_team() -> Team:
             "The memo should be concise and actionable.",
         ],
         show_members_responses=False,
+        stream_member_events=False,
         share_member_interactions=True,
         markdown=True,
         pre_hooks=[on_workflow_started],

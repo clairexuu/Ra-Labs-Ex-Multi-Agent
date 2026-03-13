@@ -2,6 +2,7 @@
 
 from agno.agent import Agent
 from agno.team import Team
+from agno.team.mode import TeamMode
 
 from app.agents.analyst import create_analyst_agent
 from app.agents.critic import create_critic_agent
@@ -38,4 +39,14 @@ class TestTeamCreation:
         team = create_investment_team()
         assert isinstance(team, Team)
         assert team.name == "Investment Team"
-        assert len(team.members) == 4
+        # 3 members: Research Agent, Analysis Team (sub-team), Decision Agent
+        assert len(team.members) == 3
+
+    def test_analysis_sub_team_structure(self):
+        team = create_investment_team()
+        # Second member is the broadcast Analysis Team
+        analysis_team = team.members[1]
+        assert isinstance(analysis_team, Team)
+        assert analysis_team.name == "Analysis Team"
+        assert analysis_team.mode == TeamMode.broadcast
+        assert len(analysis_team.members) == 2

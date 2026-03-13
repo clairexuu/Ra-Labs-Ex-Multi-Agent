@@ -39,11 +39,27 @@ def _make_agent_response(
 
 
 def _make_team_output() -> TeamRunOutput:
-    """Create a TeamRunOutput with realistic member responses."""
+    """Create a TeamRunOutput with realistic member responses.
+
+    Mirrors the nested structure: the Analysis Team (broadcast sub-team)
+    wraps Analyst + Critic responses inside a TeamRunOutput.
+    """
+    # Analysis Team sub-members (run in parallel via broadcast)
+    analyst_response = _make_agent_response("Analyst Agent", 3.05, 1200)
+    critic_response = _make_agent_response("Critic Agent", 2.80, 900)
+
+    analysis_team_response = TeamRunOutput(
+        run_id="analysis-team-run",
+        team_id="analysis-team-id",
+        team_name="Analysis Team",
+        status=RunStatus.completed,
+        metrics=RunMetrics(duration=3.10, total_tokens=2100, input_tokens=1100, output_tokens=1000),
+        member_responses=[analyst_response, critic_response],
+    )
+
     members = [
         _make_agent_response("Research Agent", 4.12, 1500),
-        _make_agent_response("Analyst Agent", 3.05, 1200),
-        _make_agent_response("Critic Agent", 2.80, 900),
+        analysis_team_response,
         _make_agent_response("Decision Agent", 1.50, 600),
     ]
     team_metrics = RunMetrics(

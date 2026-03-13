@@ -128,7 +128,13 @@ def _build_log_entry(run_output: TeamRunOutput) -> Dict[str, Any]:
 
     agents: List[Dict[str, Any]] = []
     for member in run_output.member_responses:
-        agents.append(_build_agent_entry(member))
+        # Flatten nested sub-teams (e.g. broadcast Analysis Team) so
+        # individual agents appear in the report instead of one opaque entry.
+        if isinstance(member, TeamRunOutput) and member.member_responses:
+            for sub_member in member.member_responses:
+                agents.append(_build_agent_entry(sub_member))
+        else:
+            agents.append(_build_agent_entry(member))
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
