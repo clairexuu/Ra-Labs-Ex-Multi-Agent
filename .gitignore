@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Agno local storage
+tmp/
+
+# OS
+.DS_Store
+
+# Test
+.pytest_cache/
+
+# Output
+data/output/
+
+# agent ui
+agent-ui
