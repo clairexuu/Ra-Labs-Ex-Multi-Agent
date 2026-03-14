@@ -7,6 +7,7 @@ RECOMMENDATION_VALUES = {"BUY", "HOLD", "SELL", "INVEST", "PASS", "WATCH"}
 CONFIDENCE_VALUES = {"HIGH", "MEDIUM", "LOW"}
 RISK_CATEGORY_VALUES = {"MARKET", "COMPANY_SPECIFIC", "SECTOR", "MACRO", "REGULATORY"}
 COMPANY_TYPE_VALUES = {"PUBLIC", "PRIVATE"}
+VERIFICATION_STATUS_VALUES = {"VERIFIED", "UNVERIFIED", "SEARCH_FAILED", "NOT_APPLICABLE"}
 
 # Common LLM variations of category names
 _CATEGORY_ALIASES: dict[str, str] = {
@@ -80,6 +81,20 @@ class CompanyResearch(BaseModel):
         None, description="Current funding stage (Seed, Series A, etc.)"
     )
 
+    # Verification fields (populated by CompanyValidationTool for private companies)
+    verification_status: str | None = Field(
+        None,
+        description=(
+            "Verification status for private companies: "
+            "VERIFIED, UNVERIFIED, SEARCH_FAILED, or NOT_APPLICABLE. "
+            "None if verification was not performed."
+        ),
+    )
+    confidence_score: float | None = Field(
+        None,
+        description="Confidence score (0.0-1.0) that this company actually exists.",
+    )
+
     # Shared fields
     recent_news: list[str] = Field(
         default_factory=list,
@@ -100,6 +115,13 @@ class CompanyResearch(BaseModel):
     @classmethod
     def normalize_company_type(cls, v: str) -> str:
         return _normalize_enum(v, COMPANY_TYPE_VALUES)
+
+    @field_validator("verification_status", mode="before")
+    @classmethod
+    def normalize_verification_status(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _normalize_enum(v, VERIFICATION_STATUS_VALUES)
 
 
 class CompanyResearchSet(BaseModel):

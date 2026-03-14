@@ -255,9 +255,11 @@ class TestCompanyValidationTool:
         assert result["public_companies"][0]["company_type"] == "PUBLIC"
         assert result["private_companies"] == []
 
+    @patch("app.tools.ticker_validation.yf.Search")
     @patch("app.tools.ticker_validation.yf.Ticker")
-    def test_private_company(self, mock_ticker_cls):
+    def test_private_company(self, mock_ticker_cls, mock_search_cls):
         mock_ticker_cls.return_value.info = {}
+        mock_search_cls.return_value.quotes = []
         from app.tools.ticker_validation import CompanyValidationTool
 
         tool = CompanyValidationTool()
@@ -268,8 +270,9 @@ class TestCompanyValidationTool:
         assert result["private_companies"][0]["company_name"] == "Anthropic"
         assert "note" in result
 
+    @patch("app.tools.ticker_validation.yf.Search")
     @patch("app.tools.ticker_validation.yf.Ticker")
-    def test_mixed_public_private(self, mock_ticker_cls):
+    def test_mixed_public_private(self, mock_ticker_cls, mock_search_cls):
         def side_effect(symbol):
             mock = MagicMock()
             if symbol == "AAPL":
@@ -279,6 +282,7 @@ class TestCompanyValidationTool:
             return mock
 
         mock_ticker_cls.side_effect = side_effect
+        mock_search_cls.return_value.quotes = []
         from app.tools.ticker_validation import CompanyValidationTool
 
         tool = CompanyValidationTool()
@@ -289,15 +293,86 @@ class TestCompanyValidationTool:
         assert result["summary"]["private_count"] == 1
         assert "note" in result
 
+    @patch("app.tools.ticker_validation.yf.Search")
     @patch("app.tools.ticker_validation.yf.Ticker")
-    def test_exception_classifies_as_private(self, mock_ticker_cls):
+    def test_exception_classifies_as_private(self, mock_ticker_cls, mock_search_cls):
         mock_ticker_cls.side_effect = Exception("Network error")
+        mock_search_cls.return_value.quotes = []
         from app.tools.ticker_validation import CompanyValidationTool
 
         tool = CompanyValidationTool()
         result = json.loads(tool.validate_companies("Anthropic"))
         assert len(result["private_companies"]) == 1
         assert result["public_companies"] == []
+
+    @patch("app.tools.ticker_validation.yf.Ticker")
+    @patch("app.tools.ticker_validation.yf.Search")
+    def test_company_name_resolves_to_ticker(self, mock_search_cls, mock_ticker_cls):
+        """Company name like 'NVIDIA' resolves to ticker 'NVDA' via search."""
+
+        def ticker_side_effect(symbol):
+            mock = MagicMock()
+            if symbol == "NVDA":
+                mock.info = {
+                    "shortName": "NVIDIA Corporation",
+                    "exchange": "NMS",
+                }
+            else:
+                mock.info = {}
+            return mock
+
+        mock_ticker_cls.side_effect = ticker_side_effect
+        mock_search_cls.return_value.quotes = [
+            {"symbol": "NVDA", "quoteType": "EQUITY", "shortname": "NVIDIA Corporation"}
+        ]
+        from app.tools.ticker_validation import CompanyValidationTool
+
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("NVIDIA"))
+        assert len(result["public_companies"]) == 1
+        assert result["public_companies"][0]["ticker"] == "NVDA"
+        assert result["public_companies"][0]["company_type"] == "PUBLIC"
+        assert result["private_companies"] == []
+
+    @patch("app.tools.ticker_validation.yf.Ticker")
+    @patch("app.tools.ticker_validation.yf.Search")
+    def test_typo_resolves_via_fuzzy_search(self, mock_search_cls, mock_ticker_cls):
+        """Typo like 'Appel' resolves to 'AAPL' via fuzzy search."""
+
+        def ticker_side_effect(symbol):
+            mock = MagicMock()
+            if symbol == "AAPL":
+                mock.info = {"shortName": "Apple Inc.", "exchange": "NMS"}
+            else:
+                mock.info = {}
+            return mock
+
+        mock_ticker_cls.side_effect = ticker_side_effect
+        mock_search_cls.return_value.quotes = [
+            {"symbol": "AAPL", "quoteType": "EQUITY", "shortname": "Apple Inc."}
+        ]
+        from app.tools.ticker_validation import CompanyValidationTool
+
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("Appel"))
+        assert len(result["public_companies"]) == 1
+        assert result["public_companies"][0]["ticker"] == "AAPL"
+        assert result["private_companies"] == []
+
+    @patch("app.tools.ticker_validation.yf.Ticker")
+    @patch("app.tools.ticker_validation.yf.Search")
+    def test_search_skips_non_equity_quotes(self, mock_search_cls, mock_ticker_cls):
+        """Search results that aren't EQUITY (e.g., ETFs) are skipped."""
+        mock_ticker_cls.return_value.info = {}
+        mock_search_cls.return_value.quotes = [
+            {"symbol": "SPY", "quoteType": "ETF", "shortname": "SPDR S&P 500"}
+        ]
+        from app.tools.ticker_validation import CompanyValidationTool
+
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("S&P 500"))
+        assert result["public_companies"] == []
+        assert len(result["private_companies"]) == 1
 
     @patch("app.tools.ticker_validation.yf.Ticker")
     def test_normalizes_to_uppercase(self, mock_ticker_cls):

@@ -33,7 +33,18 @@ def create_research_agent() -> Agent:
             "to classify the requested companies. Pass all company identifiers (tickers "
             "or names) as a comma-separated list.",
             "The tool will classify each as PUBLIC (found on Yahoo Finance) or PRIVATE "
-            "(not publicly traded).",
+            "(not publicly traded). Private companies are also verified via web search "
+            "and assigned a verification_status (VERIFIED, UNVERIFIED, or SEARCH_FAILED).",
+            "",
+            "IMPORTANT - UNVERIFIED COMPANIES:",
+            "After classifying companies, check the validation results for any companies "
+            "with verification_status 'UNVERIFIED'. For these companies:",
+            "- Include a prominent warning in the research output noting the company "
+            "could not be verified as a real entity",
+            "- Still attempt to research the company, but note that data may be unreliable",
+            "- Set verification_status and confidence_score in the CompanyResearch output",
+            "If a company has verification_status 'SEARCH_FAILED', note the verification "
+            "gap and proceed with available information.",
             "",
             "STEP 1 - RESEARCH PUBLIC COMPANIES:",
             "For each PUBLIC company, use YFinance tools to collect:",
