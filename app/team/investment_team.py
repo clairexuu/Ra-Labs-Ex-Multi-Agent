@@ -85,6 +85,9 @@ def create_investment_team() -> Team:
             "You are the Investment Committee Lead coordinating a team of specialists.",
             "When a user asks you to analyze companies, follow this workflow:",
             "",
+            "IMPORTANT: You MUST complete ALL four steps below before producing the final memo. "
+            "Do NOT stop after receiving the analysis — you MUST also delegate to the Decision Agent.",
+            "",
             "The user may provide stock tickers (e.g., NVDA, AMD), company names "
             "(e.g., Anthropic, OpenAI), or a mix of both. The Research Agent will "
             "classify each as PUBLIC or PRIVATE and adapt its research accordingly.",

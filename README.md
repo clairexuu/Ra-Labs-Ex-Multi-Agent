@@ -68,6 +68,47 @@
 | **YFinanceTools** | `app/tools/finance.py` | Research Agent | Stock prices, market cap, P/E ratio, analyst recommendations, company info, financial news |
 | **CompanyValidationTool** | `app/tools/ticker_validation.py` | Research Agent | Classifies identifiers as public (via YFinance) or private companies, verifies private companies via Tavily web search with confidence scoring. Also discovers companies in a sector/niche when users don't provide specific names |
 
+## How to Run
+
+### Prerequisites
+
+- Python 3.11+
+- Google Gemini API key — get one free at https://aistudio.google.com
+- Tavily API key - get one free at https://app.tavily.com/home
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/clairexuu/Ra-Labs-Ex-Multi-Agent.git
+cd Ra-Labs-Ex-Multi-Agent
+
+# Install dependencies
+pip install -e ".[dev]"
+
+# Configure API key
+cp .env.example .env
+# Edit .env and set GOOGLE_API_KEY=your-key-here
+```
+
+### Set Up and Run Locally
+
+1. Start the AgentOS server:
+
+```bash
+python app/playground.py
+```
+
+2. In a separate terminal, launch the local chat UI:
+
+```bash
+npx create-agent-ui@latest
+cd agent-ui
+npm run dev
+```
+
+4. Open **http://localhost:3000** in your browser. On the left panel under "Mode", select "Team", then select "Investment Team". Ready to Chat. 
+
 ## AI-assisted coding
 I used Claude to build this project. I started by designing the rough architecture in one chat window, then opened separate chat windows for each component (agents, tools, schemas, resilience, and tests) so that context is focused and not overwhelmed. For each component, I described the desired behavior and constraints, reviewed the generated code, and revised where needed. I used Claude to write unit tests and e2e tests, then did several rounds of manual testing through the UI. When I found bugs or limitations, I went back to the architecture, refined the design, and had Claude implement the changes.
 

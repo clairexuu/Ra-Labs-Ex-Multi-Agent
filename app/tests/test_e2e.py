@@ -29,15 +29,32 @@ PRIVATE_COMPANY_PROMPT = (
 MAX_ATTEMPTS = 2
 
 
+def _workflow_complete(result) -> bool:
+    """Check that all expected agents participated."""
+    from agno.run.team import TeamRunOutput
+
+    names = set()
+    for member in result.member_responses:
+        if isinstance(member, TeamRunOutput):
+            names.add(member.team_name)
+        else:
+            names.add(member.agent_name)
+    return {"Research Agent", "Analysis Team", "Decision Agent"} <= names
+
+
 def _run_with_retry(prompt):
-    """Run the workflow, retrying once on transient LLM errors."""
+    """Run the workflow, retrying on errors or incomplete delegation."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         team = create_investment_team()
         result = team.run(prompt)
-        if result.status != RunStatus.error:
+        if result.status != RunStatus.error and _workflow_complete(result):
             return result
+        reason = (
+            result.content if result.status == RunStatus.error
+            else "incomplete workflow — not all agents participated"
+        )
         print(
-            f"\n  [e2e] attempt {attempt}/{MAX_ATTEMPTS} failed: {result.content}",
+            f"\n  [e2e] attempt {attempt}/{MAX_ATTEMPTS} failed: {reason}",
             file=sys.stderr,
         )
     return result
