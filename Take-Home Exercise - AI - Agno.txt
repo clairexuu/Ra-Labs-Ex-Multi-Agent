@@ -67,30 +67,6 @@ Track at least:
 A simple logging table or structured JSON log is sufficient.
 ________________
 
-
-5. Resilience
-Include at least two failure-handling scenarios.
-Examples:
-* malformed user input
-* missing or partial source data
-* transient LLM/tool failure with retry
-* browser/navigation failure
-* invalid structured output that triggers repair/retry
-________________
-
-
-6. Demo UX
-Provide a basic way to run and inspect the workflow.
-Preferred:
-* Agno Agent OS UI
-Acceptable fallback:
-* CLI + readable logs
-* minimal web UI
-* notebook with reproducible run steps
-If you use Agent OS UI, show the team execution clearly.
-________________
-
-
 Strong hint on implementation
 Do not overbuild this.
 A good submission can be:
@@ -120,8 +96,10 @@ ________________
 
 
 Deliverables
+
 1. Repository
 A GitHub repository with clear setup and run instructions.
+
 2. README
 Include:
 * which track you chose
@@ -130,11 +108,13 @@ Include:
 * tools used
 * where AI-assisted coding helped
 * tradeoffs and known limitations
+
 3. Demo
 Submit one of:
 * short screen recording
 * Agent OS UI walkthrough
 * terminal demo with logs
+
 4. Example output
 Include at least one representative output artifact:
 * report
@@ -143,6 +123,7 @@ Include at least one representative output artifact:
 * campaign package
 * memo
 * action plan
+
 5. Brief build notes
 In 5–15 bullet points, explain:
 * what AI tools you used

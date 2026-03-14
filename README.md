@@ -106,7 +106,11 @@ Then open http://localhost:7777 in your browser (or connect from https://app.agn
 ### Run Tests
 
 ```bash
-pytest app/tests/ -v
+# Unit tests only (fast, no API keys needed)
+pytest app/tests/ -v -m "not e2e"
+
+# End-to-end integration test (requires API keys, ~2 minutes)
+pytest app/tests/test_e2e.py -v -s
 ```
 
 ## Project Structure

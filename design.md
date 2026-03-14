@@ -232,7 +232,11 @@ The coordinator will delegate to Research → Analysis Team (Analyst + Critic in
 ### Run Tests
 
 ```bash
-pytest app/tests/ -v
+# Unit tests only (fast, no API keys needed)
+pytest app/tests/ -v -m "not e2e"
+
+# End-to-end integration test (requires API keys, ~2 minutes)
+pytest app/tests/test_e2e.py -v -s
 ```
 
 Expected: 88 tests pass (34 schema tests + 10 agent/team creation tests + 13 observability tests + 31 resilience tests).

@@ -1,0 +1,97 @@
+"""End-to-end integration test — runs the full workflow against live APIs.
+
+Usage:
+    pytest app/tests/test_e2e.py -v -s          # run e2e only
+    pytest app/tests/ -v -m "not e2e"           # skip e2e in fast runs
+"""
+
+import sys
+
+import pytest
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from agno.run.base import RunStatus
+
+from app.team.investment_team import create_investment_team
+
+DEMO_PROMPT = (
+    "Analyze NVDA, AMD, and INTC in the Semiconductors sector "
+    "and produce an investment memo"
+)
+
+MAX_ATTEMPTS = 2
+
+
+def _run_with_retry():
+    """Run the workflow, retrying once on transient LLM errors."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        team = create_investment_team()
+        result = team.run(DEMO_PROMPT)
+        if result.status != RunStatus.error:
+            return result
+        print(
+            f"\n  [e2e] attempt {attempt}/{MAX_ATTEMPTS} failed: {result.content}",
+            file=sys.stderr,
+        )
+    return result
+
+
+@pytest.mark.e2e
+class TestInvestmentTeamE2E:
+
+    @pytest.fixture(scope="class")
+    def result(self):
+        """Run the workflow (with retry on transient LLM errors) once for all tests."""
+        return _run_with_retry()
+
+    def test_workflow_completes(self, result):
+        """Team runs to completion without error."""
+        assert result.content is not None
+        assert len(result.content) > 500  # non-trivial memo
+
+    def test_memo_has_required_sections(self, result):
+        """Final memo contains all sections from coordinator instructions."""
+        content = result.content
+        for heading in [
+            "Executive Summary",
+            "Company Overviews",
+            "Comparative Analysis",
+            "Risk Assessment",
+            "Investment Decisions",
+            "Top Pick",
+            "Open Questions",
+        ]:
+            assert heading.lower() in content.lower(), f"Missing section: {heading}"
+
+    def test_memo_mentions_all_tickers(self, result):
+        """All requested companies appear in the output."""
+        for ticker in ["NVDA", "AMD", "INTC"]:
+            assert ticker in result.content
+
+    def test_all_agents_participated(self, result):
+        """All 4 specialist agents produced responses."""
+        # Collect agent/team names from member_responses.  The coordinator
+        # may occasionally retry a delegation, so we check that the
+        # expected roles appear rather than asserting an exact count.
+        from agno.run.team import TeamRunOutput
+
+        names = set()
+        for member in result.member_responses:
+            if isinstance(member, TeamRunOutput):
+                names.add(member.team_name)
+            else:
+                names.add(member.agent_name)
+
+        assert "Research Agent" in names
+        assert "Analysis Team" in names
+        assert "Decision Agent" in names
+
+    def test_metrics_captured(self, result):
+        """Observability metrics are populated."""
+        m = result.metrics
+        assert m is not None
+        assert m.total_tokens > 0
+        assert m.input_tokens > 0
+        assert m.output_tokens > 0
