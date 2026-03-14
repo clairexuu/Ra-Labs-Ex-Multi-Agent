@@ -78,7 +78,7 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
 |------|--------|---------|---------|
 | **TavilyTools** | `app/tools/search.py` | Research Agent | Web search for company news, products, competitive position, lawsuits, regulatory issues |
 | **YFinanceTools** | `app/tools/finance.py` | Research Agent | Stock prices, market cap, P/E ratio, analyst recommendations, company info, financial news |
-| **TickerValidationTool** | `app/tools/ticker_validation.py` | Research Agent | Validates ticker symbols against YFinance before research begins |
+| **CompanyValidationTool** | `app/tools/ticker_validation.py` | Research Agent | Classifies identifiers as public (via YFinance) or private companies, verifies private companies via Tavily web search with confidence scoring |
 
 All tools are configured in `app/tools/` and imported by the Research Agent. Tavily and YFinance tools are wrapped with resilient subclasses (`ResilientTavilyTools`, `ResilientYFinanceTools` in `app/tools/resilient_wrappers.py`) that add retry with exponential backoff and a circuit breaker. The Analyst and Critic agents have no tools — they perform pure reasoning on the research data passed to them by the coordinator.
 
@@ -87,7 +87,7 @@ All tools are configured in `app/tools/` and imported by the Research Agent. Tav
 All agent inputs/outputs use strongly typed Pydantic models defined in `app/models/schemas.py`:
 
 ### Research Agent Output
-- **`CompanyResearch`** — Single company data: ticker, company_name, sector, current_price, market_cap, pe_ratio, revenue_growth, analyst_consensus, recent_news, key_products, competitive_position, negative_news
+- **`CompanyResearch`** — Single company data: company_name, company_type (`PUBLIC`/`PRIVATE`), ticker (optional, null for private companies), sector, public-company financials (current_price, market_cap, pe_ratio, revenue_growth, analyst_consensus), private-company fields (latest_funding_round, total_funding, latest_valuation, key_investors, estimated_revenue, funding_stage), verification fields (verification_status, confidence_score), and shared fields (recent_news, key_products, competitive_position, negative_news)
 - **`CompanyResearchSet`** — Collection: sector, list of `CompanyResearch`, research_date
 
 ### Analyst Agent Output
@@ -129,18 +129,38 @@ All retry attempts and circuit breaker state changes are logged to stderr for re
 
 **Tests:** `TestCircuitBreaker`, `TestIsErrorResponse`, `TestResilientMethod`, `TestResilientToolsIntegration` in `app/tests/test_resilience.py` — 19 tests covering breaker lifecycle (closed → open → half-open → closed), error-string detection, retry behavior, and integration with the tool factories.
 
-### Scenario 3: Malformed user input — ticker validation
+### Scenario 3: Malformed user input — company classification & verification
 
-If a user provides invalid ticker symbols (misspelled, delisted, or fictional), the Research Agent validates them **before** spending time and API credits on full research. A `TickerValidationTool` (`app/tools/ticker_validation.py`) checks each ticker against `yfinance.Ticker().info`:
+Users can provide ticker symbols (`NVDA`), company names (`NVIDIA`), or startup/private company names (`Anthropic`). The Research Agent classifies and verifies every identifier **before** spending time and API credits on research using a two-stage pipeline in `CompanyValidationTool`:
 
-- **Valid tickers** (have a `shortName` in the YFinance response) proceed to research
-- **Invalid tickers** are reported back with a warning and suggestions (check spelling, exchange suffix like `.L` or `.TO`)
-- **Empty input** returns an error message asking for ticker symbols
-- If **all** tickers are invalid, the agent stops and reports the issue rather than producing a garbage memo
+**Stage 1 — Classify (public vs private):**
+Each identifier is resolved against YFinance in two steps:
+1. **Direct ticker lookup** — tries the identifier as a ticker symbol (e.g., `AAPL` → Apple Inc.)
+2. **Fuzzy name search** — if the direct lookup fails, searches YFinance with `enable_fuzzy_query=True`, accepting only EQUITY results (skips ETFs). This handles company names (e.g., `NVIDIA` → `NVDA`) and typos (e.g., `Appel` → `AAPL`)
 
-**Implementation:** `TickerValidationTool` Agno Toolkit in `app/tools/ticker_validation.py`, added as the 3rd tool on the Research Agent. Instructions prepend a "STEP 0 — VALIDATE TICKERS" step before data gathering.
+If found, the company is classified as **PUBLIC** with its resolved ticker. If not found on YFinance, it is classified as **PRIVATE** (startup/private company).
 
-**Tests:** `TestTickerValidationTool` in `app/tests/test_resilience.py` — 8 tests covering empty input, valid/invalid/mixed tickers (mocked YFinance), exception handling, and case normalization.
+**Stage 2 — Verify private companies (anti-hallucination guard):**
+Private companies are verified via Tavily web search to confirm they actually exist. A confidence score is computed from four weighted signals:
+- **Result count** (weight 0.3) — more search results = more likely real
+- **Average relevance** (weight 0.3) — Tavily's built-in relevance scores
+- **Name match frequency** (weight 0.2) — fraction of results mentioning the company name
+- **Source quality** (weight 0.2) — fraction of results from reputable domains (Reuters, Bloomberg, TechCrunch, Crunchbase, etc.)
+
+Based on the confidence score, each private company receives a verification status:
+- **VERIFIED** (score ≥ 0.4) — confirmed as a real company, proceed with Tavily-only research
+- **UNVERIFIED** (score < 0.4) — flagged with a "LOW CONFIDENCE" warning that results may be hallucinated
+- **SEARCH_FAILED** — Tavily API error or missing API key; verification gap noted
+
+**Research agent adaptation:**
+- **Public companies** → YFinance for financials (price, market cap, P/E, analyst consensus) + Tavily for news. Ticker is populated
+- **Private/startup companies** → Tavily-only for funding rounds, valuation, key investors, revenue estimates, funding stage. Ticker is null, no YFinance calls
+- **Unverified companies** → Research proceeds but output includes a prominent warning that data may be unreliable
+- **Empty input** → returns an error message asking for company identifiers
+
+**Implementation:** `CompanyValidationTool` Agno Toolkit in `app/tools/ticker_validation.py`, added as the 3rd tool on the Research Agent. Instructions prepend a "STEP 0 — CLASSIFY COMPANIES" step before data gathering.
+
+**Tests:** `TestCompanyValidationTool` in `app/tests/test_resilience.py` — 11 tests covering empty input, public tickers, private companies, mixed inputs, fuzzy name resolution, typo correction, non-equity filtering, case normalization, and exception handling. `app/tests/test_verification.py` — 19 tests covering confidence computation, verification statuses (verified/unverified/search-failed), schema validation for `company_type` and `verification_status` fields, and integration scenarios with mixed verified/unverified companies.
 
 ## File Structure
 
@@ -239,4 +259,4 @@ pytest app/tests/ -v -m "not e2e"
 pytest app/tests/test_e2e.py -v -s
 ```
 
-Expected: 88 tests pass (34 schema tests + 10 agent/team creation tests + 13 observability tests + 31 resilience tests).
+Expected: 131 tests pass (51 schema tests + 9 agent/team creation tests + 13 observability tests + 35 resilience tests + 23 verification tests).
