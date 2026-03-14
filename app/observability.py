@@ -437,6 +437,15 @@ def _build_log_entry(run_output: TeamRunOutput) -> Dict[str, Any]:
     collector = _tool_collector.get(None)
     timeline = _event_timeline.get(None)
 
+    # Agno's TeamRunOutput.metrics only tracks the coordinator's own tokens.
+    # To get the true total we must add all member-agent tokens on top.
+    coordinator_input = m.input_tokens if m else 0
+    coordinator_output = m.output_tokens if m else 0
+    coordinator_total = m.total_tokens if m else 0
+    agent_input = sum(a.get("input_tokens") or 0 for a in agents)
+    agent_output = sum(a.get("output_tokens") or 0 for a in agents)
+    agent_total = sum(a.get("total_tokens") or 0 for a in agents)
+
     entry: Dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "trace_id": _trace_id.get("no-trace"),
@@ -444,9 +453,10 @@ def _build_log_entry(run_output: TeamRunOutput) -> Dict[str, Any]:
         "session_id": run_output.session_id,
         "status": status_str,
         "total_duration_s": _safe_duration(m),
-        "total_tokens": m.total_tokens if m else None,
-        "input_tokens": m.input_tokens if m else None,
-        "output_tokens": m.output_tokens if m else None,
+        "total_tokens": coordinator_total + agent_total,
+        "input_tokens": coordinator_input + agent_input,
+        "output_tokens": coordinator_output + agent_output,
+        "coordinator_tokens": coordinator_total,
         "agents": agents,
         "tool_calls": collector.to_records() if collector else [],
         "tool_summary": collector.summary() if collector else [],
@@ -468,6 +478,7 @@ def _format_table(entry: Dict[str, Any]) -> str:
         f"  Status:     {entry['status']}",
         f"  Duration:   {entry['total_duration_s']:.2f}s" if entry["total_duration_s"] else "  Duration:   N/A",
         f"  Tokens:     {entry['total_tokens']} (in: {entry['input_tokens']}, out: {entry['output_tokens']})",
+        f"  Coordinator:{entry.get('coordinator_tokens', 'N/A')}",
         "-" * 60,
         "  Per-Agent Breakdown:",
     ]

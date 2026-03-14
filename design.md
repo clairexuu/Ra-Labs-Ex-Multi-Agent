@@ -243,9 +243,11 @@ Enter one of these in the Playground chat:
 
 > Analyze NVDA, AMD, and INTC in the Semiconductors sector and produce an investment memo
 
+> Analyze Nvidia, AMD, and Intel in the Semiconductors sector and produce an investment memo
+
 > Find 3 AI startups in autonomous driving and compare them
 
-> Search for 4 public companies in cloud computing and compare
+> Search for 2 public companies in cloud computing and compare
 
 The first prompt uses direct company identifiers. The second and third use the **discovery** feature — the Research Agent searches for companies in the sector, classifies and verifies them, then proceeds with the standard pipeline. The coordinator will delegate to Research → Analysis Team (Analyst + Critic in parallel) → Decision, then synthesize the final memo. Each specialist's work is visible in the UI.
 
