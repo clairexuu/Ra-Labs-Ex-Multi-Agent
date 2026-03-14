@@ -2,9 +2,10 @@
 
 Adds retry with exponential backoff and a circuit breaker pattern
 around each tool method to handle transient API failures gracefully.
+Tool call metrics are recorded via the observability module.
 """
 
-import sys
+import logging
 import time
 from functools import wraps
 from typing import Any, Callable
@@ -12,9 +13,9 @@ from typing import Any, Callable
 from agno.tools.tavily import TavilyTools
 from agno.tools.yfinance import YFinanceTools
 
+from app.observability import categorize_error, record_timeline_event, record_tool_call
 
-def _stderr(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+logger = logging.getLogger("investment_team.tools")
 
 
 def _is_error_response(result: str) -> bool:
@@ -94,10 +95,20 @@ def _resilient_method(
         # Circuit breaker check
         if not breaker.allow_request():
             msg = (
-                f"[circuit-breaker] {tool_name} is unavailable "
+                f"{tool_name} is unavailable "
                 f"(tripped after {breaker.failure_threshold} consecutive failures)."
             )
-            _stderr(msg)
+            logger.warning(
+                msg,
+                extra={"event": "circuit_breaker_open", "tool": tool_name},
+            )
+            record_timeline_event(
+                "circuit_breaker_open", tool=tool_name, detail=msg,
+            )
+            record_tool_call(
+                tool_name, duration_s=0.0, success=False, attempts=0,
+                error="circuit_breaker_open",
+            )
             return (
                 f"Service temporarily unavailable for {tool_name}. "
                 f"The circuit breaker has tripped after "
@@ -106,41 +117,82 @@ def _resilient_method(
             )
 
         # Retry loop with exponential backoff
+        start = time.perf_counter()
         last_result: str | None = None
+        last_error: str | None = None
         for attempt in range(1, max_retries + 1):
             try:
                 result = method(*args, **kwargs)
             except Exception as exc:
-                _stderr(
-                    f"[retry] {tool_name} attempt {attempt}/{max_retries} "
-                    f"raised {type(exc).__name__}: {exc}"
+                error_type = categorize_error(str(exc))
+                logger.warning(
+                    f"{tool_name} attempt {attempt}/{max_retries} "
+                    f"raised {type(exc).__name__}: {exc}",
+                    extra={
+                        "event": "retry",
+                        "tool": tool_name,
+                        "attempts": attempt,
+                        "error_type": error_type,
+                    },
+                )
+                record_timeline_event(
+                    "retry",
+                    tool=tool_name,
+                    detail=f"attempt {attempt}/{max_retries}: {type(exc).__name__}: {str(exc)[:100]}",
                 )
                 last_result = f"Error: {exc}"
+                last_error = f"{type(exc).__name__}: {str(exc)[:120]}"
                 if attempt < max_retries:
                     delay = min(min_wait * (2 ** (attempt - 1)), max_wait)
                     time.sleep(delay)
                 continue
 
             if _is_error_response(result):
-                _stderr(
-                    f"[retry] {tool_name} attempt {attempt}/{max_retries} "
-                    f"returned error: {result[:120]}"
+                error_type = categorize_error(result)
+                logger.warning(
+                    f"{tool_name} attempt {attempt}/{max_retries} "
+                    f"returned error: {result[:120]}",
+                    extra={
+                        "event": "retry",
+                        "tool": tool_name,
+                        "attempts": attempt,
+                        "error_type": error_type,
+                    },
+                )
+                record_timeline_event(
+                    "retry",
+                    tool=tool_name,
+                    detail=f"attempt {attempt}/{max_retries}: {result[:100]}",
                 )
                 last_result = result
+                last_error = result[:120]
                 if attempt < max_retries:
                     delay = min(min_wait * (2 ** (attempt - 1)), max_wait)
                     time.sleep(delay)
                 continue
 
             # Success
+            elapsed = time.perf_counter() - start
             breaker.record_success()
+            record_tool_call(
+                tool_name, duration_s=elapsed, success=True, attempts=attempt,
+            )
             return result
 
         # All retries exhausted
+        elapsed = time.perf_counter() - start
         breaker.record_failure()
-        _stderr(
-            f"[circuit-breaker] {tool_name} failure count: "
-            f"{breaker.consecutive_failures}/{breaker.failure_threshold}"
+        logger.error(
+            f"{tool_name} failure count: "
+            f"{breaker.consecutive_failures}/{breaker.failure_threshold}",
+            extra={
+                "event": "circuit_breaker_failure",
+                "tool": tool_name,
+            },
+        )
+        record_tool_call(
+            tool_name, duration_s=elapsed, success=False,
+            attempts=max_retries, error=last_error,
         )
         return last_result or f"Error: {tool_name} failed after {max_retries} attempts"
 

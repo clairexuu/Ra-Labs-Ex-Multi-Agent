@@ -76,3 +76,4 @@ I used Claude to build this project. I started by designing the rough architectu
 - Validate searched companies across multiple platforms to avoid hallucination
 - Show more informative status updates in the UI during the agent workflow, e.g., searching for company, doing research, analyzing, finding risks, writing memo
 - Allow the Critic agent to reject an Analyst's output with specific feedback, sending it back for a repair iteration
+- Need more comprehensive error log to the log and more user informative log to the UI if task failed

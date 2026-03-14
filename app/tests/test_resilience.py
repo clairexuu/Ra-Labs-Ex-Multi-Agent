@@ -2,10 +2,18 @@
 
 import json
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.observability import (
+    _event_timeline,
+    _tool_collector,
+    _trace_id,
+    on_workflow_started,
+    setup_logging,
+)
 from app.tools.resilient_wrappers import (
     CircuitBreaker,
     ResilientTavilyTools,
@@ -170,6 +178,111 @@ class TestResilientMethod:
         assert "Error:" in result
         assert method.call_count == 3
         assert breaker.consecutive_failures == 1
+
+
+# ---------------------------------------------------------------------------
+# Tool metric recording via observability
+# ---------------------------------------------------------------------------
+class TestResilientMethodMetrics:
+    """Verify _resilient_method records tool calls and timeline events."""
+
+    @pytest.fixture(autouse=True)
+    def _init_observability(self):
+        setup_logging()
+        token_trace = _trace_id.set("no-trace")
+        token_collector = _tool_collector.set(None)
+        token_timeline = _event_timeline.set(None)
+        # Initialize workflow context so collectors exist
+        on_workflow_started(team=SimpleNamespace(name="Test"))
+        yield
+        _trace_id.reset(token_trace)
+        _tool_collector.reset(token_collector)
+        _event_timeline.reset(token_timeline)
+
+    def test_success_records_tool_call(self):
+        method = MagicMock(return_value="100.00")
+        breaker = CircuitBreaker(failure_threshold=3)
+        wrapped = _resilient_method(
+            method, breaker, "test_tool", max_retries=3, min_wait=0.01
+        )
+        wrapped("AAPL")
+
+        collector = _tool_collector.get(None)
+        assert len(collector.records) == 1
+        assert collector.records[0].tool_name == "test_tool"
+        assert collector.records[0].success is True
+        assert collector.records[0].attempts == 1
+        assert collector.records[0].error is None
+
+    def test_retry_success_records_attempt_count(self):
+        method = MagicMock(
+            side_effect=["Error fetching data", "100.00"]
+        )
+        breaker = CircuitBreaker(failure_threshold=3)
+        wrapped = _resilient_method(
+            method, breaker, "test_tool", max_retries=3, min_wait=0.01
+        )
+        wrapped("AAPL")
+
+        collector = _tool_collector.get(None)
+        assert len(collector.records) == 1
+        assert collector.records[0].success is True
+        assert collector.records[0].attempts == 2
+
+    def test_failure_records_error(self):
+        method = MagicMock(return_value="Error fetching data")
+        breaker = CircuitBreaker(failure_threshold=5)
+        wrapped = _resilient_method(
+            method, breaker, "test_tool", max_retries=2, min_wait=0.01
+        )
+        wrapped("AAPL")
+
+        collector = _tool_collector.get(None)
+        assert len(collector.records) == 1
+        assert collector.records[0].success is False
+        assert collector.records[0].attempts == 2
+        assert collector.records[0].error is not None
+
+    def test_circuit_breaker_block_records_metric(self):
+        method = MagicMock(return_value="should not be called")
+        breaker = CircuitBreaker(failure_threshold=1)
+        breaker.record_failure()
+        wrapped = _resilient_method(
+            method, breaker, "test_tool", max_retries=3, min_wait=0.01
+        )
+        wrapped("AAPL")
+
+        collector = _tool_collector.get(None)
+        assert len(collector.records) == 1
+        assert collector.records[0].success is False
+        assert collector.records[0].error == "circuit_breaker_open"
+
+    def test_retry_events_in_timeline(self):
+        method = MagicMock(
+            side_effect=[ConnectionError("network down"), "100.00"]
+        )
+        breaker = CircuitBreaker(failure_threshold=3)
+        wrapped = _resilient_method(
+            method, breaker, "test_tool", max_retries=3, min_wait=0.01
+        )
+        wrapped("AAPL")
+
+        timeline = _event_timeline.get(None)
+        retry_events = [e for e in timeline.events if e.event == "retry"]
+        assert len(retry_events) == 1
+        assert "network down" in retry_events[0].detail
+
+    def test_duration_is_recorded(self):
+        method = MagicMock(return_value="100.00")
+        breaker = CircuitBreaker(failure_threshold=3)
+        wrapped = _resilient_method(
+            method, breaker, "test_tool", max_retries=3, min_wait=0.01
+        )
+        wrapped("AAPL")
+
+        collector = _tool_collector.get(None)
+        assert collector.records[0].duration_s >= 0.0
+        assert isinstance(collector.records[0].duration_s, float)
 
 
 # ---------------------------------------------------------------------------

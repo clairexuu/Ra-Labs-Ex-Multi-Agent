@@ -11,6 +11,7 @@ from app.observability import (
     on_agent_completed,
     on_agent_started,
     on_workflow_started,
+    setup_logging,
 )
 
 
@@ -34,6 +35,8 @@ def create_investment_team() -> Team:
         3. Coordinator delegates to Decision Agent for investment decisions
         4. Coordinator synthesizes all outputs into the final investment memo
     """
+    setup_logging()
+
     research_agent = create_research_agent()
     analyst_agent = create_analyst_agent()
     critic_agent = create_critic_agent()

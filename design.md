@@ -126,74 +126,33 @@ At the tool level, both Tavily and YFinance tools are wrapped with **`ResilientT
 - **Retry with exponential backoff** (up to 3 attempts, 1s → 2s → 4s delays) — retries on both exceptions and error-string responses (e.g., `"Error fetching current price for XYZ"`)
 - **Circuit breaker** — after 3 consecutive failures for a tool, the breaker trips to OPEN state and returns a `"Service temporarily unavailable"` message immediately, preventing cascading failures. After a 60-second reset timeout, one probe request is allowed through (half-open state); if it succeeds, the breaker closes.
 
-All retry attempts and circuit breaker state changes are logged to stderr for real-time observability.
+All retry attempts and circuit breaker state changes are logged via Python's `logging` module (`investment_team.tools` logger) with structured fields (`event`, `tool`, `error_type`, `attempts`). Each tool call is also recorded in the `ToolMetricsCollector` with wall-clock duration, success/failure, attempt count, and error details (see Observability section).
 
 **Implementation:** `app/tools/resilient_wrappers.py` (CircuitBreaker class, `_resilient_method` wrapper, `_is_error_response` detector). Tool factories in `app/tools/search.py` and `app/tools/finance.py` return the resilient subclasses.
 
-**Tests:** `TestCircuitBreaker`, `TestIsErrorResponse`, `TestResilientMethod`, `TestResilientToolsIntegration` in `app/tests/test_resilience.py` — 19 tests covering breaker lifecycle (closed → open → half-open → closed), error-string detection, retry behavior, and integration with the tool factories.
+**Tests:** `TestCircuitBreaker`, `TestIsErrorResponse`, `TestResilientMethod`, `TestResilientMethodMetrics`, `TestResilientToolsIntegration` in `app/tests/test_resilience.py` — 26 tests covering breaker lifecycle (closed → open → half-open → closed), error-string detection, retry behavior, tool metric recording, timeline event emission, and integration with the tool factories.
 
 ### Scenario 3: Malformed user input — company classification & verification
 
-Users can provide ticker symbols (`NVDA`), company names (`NVIDIA`), or startup/private company names (`Anthropic`). The Research Agent classifies and verifies every identifier **before** spending time and API credits on research using a two-stage pipeline in `CompanyValidationTool`:
+`CompanyValidationTool` classifies and verifies every identifier before research begins. **Stage 1 — Classify:** Each identifier is resolved against YFinance via direct ticker lookup then fuzzy name search (handling typos like `Appel` → `AAPL`). Matches are classified as PUBLIC with a resolved ticker; non-matches are classified as PRIVATE. **Stage 2 — Verify private companies:** Private companies are verified via Tavily web search with a confidence score from four signals (result count, relevance, name match frequency, source quality). Companies score ≥ 0.4 are VERIFIED; below are UNVERIFIED with a hallucination warning. Public companies use YFinance + Tavily; private companies use Tavily-only; unverified companies proceed with a prominent warning.
 
-**Stage 1 — Classify (public vs private):**
-Each identifier is resolved against YFinance in two steps:
-1. **Direct ticker lookup** — tries the identifier as a ticker symbol (e.g., `AAPL` → Apple Inc.)
-2. **Fuzzy name search** — if the direct lookup fails, searches YFinance with `enable_fuzzy_query=True`, accepting only EQUITY results (skips ETFs). This handles company names (e.g., `NVIDIA` → `NVDA`) and typos (e.g., `Appel` → `AAPL`)
+**Implementation:** `CompanyValidationTool` in `app/tools/ticker_validation.py`, added as the 3rd tool on the Research Agent.
 
-If found, the company is classified as **PUBLIC** with its resolved ticker. If not found on YFinance, it is classified as **PRIVATE** (startup/private company).
-
-**Stage 2 — Verify private companies (anti-hallucination guard):**
-Private companies are verified via Tavily web search to confirm they actually exist. A confidence score is computed from four weighted signals:
-- **Result count** (weight 0.3) — more search results = more likely real
-- **Average relevance** (weight 0.3) — Tavily's built-in relevance scores
-- **Name match frequency** (weight 0.2) — fraction of results mentioning the company name
-- **Source quality** (weight 0.2) — fraction of results from reputable domains (Reuters, Bloomberg, TechCrunch, Crunchbase, etc.)
-
-Based on the confidence score, each private company receives a verification status:
-- **VERIFIED** (score ≥ 0.4) — confirmed as a real company, proceed with Tavily-only research
-- **UNVERIFIED** (score < 0.4) — flagged with a "LOW CONFIDENCE" warning that results may be hallucinated
-- **SEARCH_FAILED** — Tavily API error or missing API key; verification gap noted
-
-**Research agent adaptation:**
-- **Public companies** → YFinance for financials (price, market cap, P/E, analyst consensus) + Tavily for news. Ticker is populated
-- **Private/startup companies** → Tavily-only for funding rounds, valuation, key investors, revenue estimates, funding stage. Ticker is null, no YFinance calls
-- **Unverified companies** → Research proceeds but output includes a prominent warning that data may be unreliable
-- **Empty input** → returns an error message asking for company identifiers
-
-**Implementation:** `CompanyValidationTool` Agno Toolkit in `app/tools/ticker_validation.py`, added as the 3rd tool on the Research Agent. Instructions prepend a "STEP 0 — CLASSIFY COMPANIES" step before data gathering.
-
-**Tests:** `TestCompanyValidationTool` in `app/tests/test_resilience.py` — 11 tests covering empty input, public tickers, private companies, mixed inputs, fuzzy name resolution, typo correction, non-equity filtering, case normalization, and exception handling. `app/tests/test_verification.py` — 19 tests covering confidence computation, verification statuses (verified/unverified/search-failed), schema validation for `company_type` and `verification_status` fields, and integration scenarios with mixed verified/unverified companies.
+**Tests:** 11 tests in `app/tests/test_resilience.py` (classification, fuzzy matching, edge cases); 19 tests in `app/tests/test_verification.py` (confidence scoring, verification statuses, integration).
 
 ### Scenario 4: Company discovery — sector-based search with name extraction & filtering
 
-Users can ask the system to **discover** companies in a sector or niche (e.g., "find 3 AI startups in autonomous driving") instead of providing explicit names. The `discover_companies` tool on `CompanyValidationTool` handles the full pipeline:
+`discover_companies` lets users find companies by sector (e.g., "find 3 AI startups in autonomous driving") instead of providing explicit names. A year-biased Tavily query surfaces recent companies, then candidate names are extracted from the AI answer and titles using regex with weighted scoring (answer text 2×, titles 1×), stop-word filtering, and deduplication (capped at 10). Each candidate is classified via the same YFinance pipeline as Scenario 3, filtered by requested type (PUBLIC/PRIVATE), and private candidates must pass Tavily verification to be included. Discovery failures are handled silently — the user sees only successfully discovered companies in the final memo.
 
-**Stage 1 — Search:**
-A year-biased Tavily query surfaces recent, active companies. The query includes year keywords (e.g., `"best autonomous driving startups 2025 2024 funding raised active"` for private, `"top semiconductor stocks best performing companies 2025 2024"` for public) to bias results toward listicle articles that naturally feature thriving, well-funded companies rather than defunct ones.
+**Implementation:** `discover_companies` and `_extract_company_names` in `app/tools/ticker_validation.py`. Discovery instructions in `app/agents/research.py` (STEP 0a) and `app/team/investment_team.py`.
 
-**Stage 2 — Extract candidate names:**
-Company names are extracted from Tavily's AI-generated answer text and result titles using a regex heuristic that matches capitalized multi-word phrases (e.g., `"Aurora Innovation"`, `"Nuro"`). Extraction includes:
-- **Weighted scoring** — names from the answer text receive 2× weight vs. names from titles (1×), so the AI summary's top picks rank higher
-- **Stop-word filtering** — generic terms (`"Top"`, `"Leading"`, `"Startup"`, `"IPO"`, `"CEO"`, etc.) are stripped from trailing positions to avoid false matches like `"Aurora Innovation IPO"`
-- **Deduplication** — separate `seen_names` and `seen_tickers` sets prevent the same company from appearing twice (e.g., when `"NVIDIA"` matches both as a name and a ticker)
-- **Count clamping** — the requested count is capped at `MAX_DISCOVERY_COUNT = 10` to prevent excessive API usage
+**Tests:** `app/tests/test_discovery.py` — 21 tests covering name extraction (7), discovery pipeline (12), and tool registration (2).
 
-**Stage 3 — Classify & filter:**
-Each candidate name is run through the same `_resolve_identifier` pipeline used by `validate_companies` (direct ticker lookup → fuzzy YFinance search). Companies are classified as PUBLIC or PRIVATE. If the user requested `company_type="PRIVATE"`, public companies are filtered out (and vice versa).
+## Observability and Instrumentation
 
-**Stage 4 — Verify private companies:**
-Private candidates go through the same Tavily verification pipeline as Scenario 3 (confidence scoring with result count, relevance, name match, and source quality signals). Only VERIFIED companies are included in the final output.
+The system provides structured, multi-layer observability via `app/observability.py`. It uses Python's `logging` module with two handlers (stderr for human-readable output, `logs/events.jsonl` for structured JSON). Each workflow run gets a unique **trace ID** (via `contextvars`) that propagates through all log records, tool calls, and the final JSONL metrics entry for end-to-end correlation. A **`ToolMetricsCollector`** records every tool invocation (name, duration, success, retry attempts, error) and produces per-tool aggregated stats in the final report. An **`EventTimeline`** accumulates timestamped events (agent starts/completions, tool calls, retries, circuit breaker trips, errors) into a chronological sequence for debugging. Errors are auto-categorized (`timeout`, `rate_limit`, `circuit_breaker`, `validation_error`, `api_error`, `unknown`) via `categorize_error()` and tagged on log records and timeline events. The team post-hook produces a comprehensive observability report (trace ID, per-agent breakdown, tool call stats, timeline) printed to stderr and written to `logs/metrics.jsonl`.
 
-**Silent failure handling:**
-Both the Research Agent and Coordinator are instructed to **never report discovery failures to the user**. Rejected candidates, unverified companies, defunct companies, and re-delegation attempts are handled silently. The user sees only the final investment memo with the successfully discovered companies, presented as if they were always the target.
-
-**Implementation:** `discover_companies` method and `_extract_company_names` helper in `app/tools/ticker_validation.py`. Discovery instructions in STEP 0a of `app/agents/research.py` and the coordinator instructions in `app/team/investment_team.py`.
-
-**Tests:** `app/tests/test_discovery.py` — 21 tests across three classes:
-- `TestExtractCompanyNames` (7 tests) — answer text extraction, title extraction, weight ranking, deduplication, stop-word exclusion, empty input, max count clamping
-- `TestDiscoverCompanies` (12 tests) — private discovery, public discovery, output format compatibility with `validate_companies`, no results, count clamping, invalid count, invalid company type, missing API key, fewer-than-requested note, Tavily failure, metadata output, public-company filtering for PRIVATE requests
-- `TestDiscoverCompaniesRegistration` (2 tests) — both `validate_companies` and `discover_companies` are registered as tool methods
+**Implementation:** `app/observability.py`, `app/tools/resilient_wrappers.py`, `app/team/investment_team.py`. **Tests:** 64 tests in `app/tests/test_observability.py` + 7 tests in `TestResilientMethodMetrics` (`app/tests/test_resilience.py`).
 
 ## File Structure
 
@@ -202,6 +161,7 @@ app/
   __init__.py
   playground.py              # Agno Playground server (port 7777)
   config.py                  # Gemini model config via env vars
+  observability.py           # Structured logging, trace IDs, tool metrics, event timeline
   models/
     __init__.py
     schemas.py               # All Pydantic models for typed state
@@ -299,4 +259,4 @@ pytest app/tests/ -v -m "not e2e"
 pytest app/tests/test_e2e.py -v -s
 ```
 
-Expected: 152 tests pass (51 schema tests + 9 agent/team creation tests + 13 observability tests + 35 resilience tests + 23 verification tests + 21 discovery tests).
+Expected: 209 tests pass (51 schema tests + 9 agent/team creation tests + 64 observability tests + 41 resilience tests + 23 verification tests + 21 discovery tests).
