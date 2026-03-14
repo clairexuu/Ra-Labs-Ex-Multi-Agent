@@ -421,7 +421,7 @@ class TestEnumValidation:
     def test_category_rejects_invalid(self):
         with pytest.raises(ValidationError):
             RiskFactor(
-                category="GEOPOLITICAL",
+                category="NONSENSE",
                 description="test",
                 severity="HIGH",
                 affected_companies=["AAPL"],

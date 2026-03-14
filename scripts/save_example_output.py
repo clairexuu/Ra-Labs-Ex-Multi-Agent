@@ -1,4 +1,4 @@
-"""Run the investment team workflow and save the output memo to data/examples/.
+"""Run the investment team workflow and save the output memos to examples/.
 
 Usage:
     python scripts/save_example_output.py
@@ -13,33 +13,43 @@ load_dotenv()
 
 from app.team.investment_team import create_investment_team
 
-DEMO_PROMPT = (
-    "Analyze NVDA, AMD, and INTC in the Semiconductors sector "
-    "and produce an investment memo"
-)
-
-# Alternative prompt for private companies:
-# DEMO_PROMPT = (
-#     "Analyze Anthropic, OpenAI, and Cohere in the AI sector "
-#     "and produce an investment memo"
-# )
-
-OUTPUT_PATH = Path("examples/sample_memo.md")
+PROMPTS = [
+    (
+        "Analyze NVDA, AMD, and INTC in the Semiconductors sector "
+        "and produce an investment memo",
+        Path("examples/sample_memo_given_public.md"),
+    ),
+    (
+        "Find 3 AI startups in autonomous driving and compare them",
+        Path("examples/sample_memo_search_private.md"),
+    ),
+    (
+        "Search for 3 public companies in cloud computing and compare",
+        Path("examples/sample_memo_search_public.md"),
+    ),
+]
 
 
 def main():
-    print(f"Running investment team with prompt:\n  {DEMO_PROMPT}\n")
-
     team = create_investment_team()
-    result = team.run(DEMO_PROMPT)
 
-    if result.content is None or len(result.content) < 100:
-        print("ERROR: Workflow produced no meaningful output.", file=sys.stderr)
-        sys.exit(1)
+    for prompt, output_path in PROMPTS:
+        print(f"Running investment team with prompt:\n  {prompt}\n")
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(result.content)
-    print(f"\nMemo saved to {OUTPUT_PATH} ({len(result.content)} characters)")
+        result = team.run(prompt)
+
+        if result.content is None or len(result.content) < 100:
+            print(
+                f"ERROR: Workflow produced no meaningful output for: {prompt}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(result.content)
+        print(f"Memo saved to {output_path} ({len(result.content)} characters)\n")
+
+    print("All memos saved successfully.")
 
 
 if __name__ == "__main__":
