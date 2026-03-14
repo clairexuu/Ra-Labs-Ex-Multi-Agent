@@ -103,6 +103,10 @@ Then open http://localhost:7777 in your browser (or connect from https://app.agn
 **Demo prompt:**
 > Analyze NVDA, AMD, and INTC in the Semiconductors sector and produce an investment memo
 
+### Example Output
+
+See [`data/examples/sample_memo.md`](data/examples/sample_memo.md) for a representative investment memo produced by the system analyzing NVDA, AMD, and INTC.
+
 ### Run Tests
 
 ```bash
