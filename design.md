@@ -21,8 +21,8 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
                             ▼
                    ┌──────────────┐
                    │Research Agent │  Specialist #1
-                   │ Tavily +     │  Gathers financial data + news
-                   │ YFinance     │  + risk-relevant info
+                   │ Tavily +     │  Gathers company data + financial data + 
+                   │ YFinance     │  news + risk-relevant info
                    └──────┬───────┘
                           │
          Step 2: Delegate to Analysis Team (broadcast)
@@ -226,9 +226,10 @@ app/
     test_workflow.py         # Agent/Team creation + retry config tests
     test_resilience.py       # Circuit breaker, retry, ticker validation tests
     test_discovery.py        # Company discovery + name extraction tests
-data/
-  examples/
+examples/
     sample_memo.md           # Example output artifact
+scripts/
+    save_example_output.py   # Script to run examples, then saved to examples/
 pyproject.toml               # Dependencies
 .env.example                 # Environment variable template
 README.md                    # Project documentation
@@ -241,6 +242,7 @@ design.md                    # This file
 
 - Python 3.11+
 - Google Gemini API key — get one free at https://aistudio.google.com
+- Tavily API key - get one free at https://app.tavily.com/home
 
 ### Installation
 
