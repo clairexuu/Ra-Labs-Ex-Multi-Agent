@@ -1,10 +1,10 @@
-from agno.tools.tavily import TavilyTools
+from app.tools.resilient_wrappers import ResilientTavilyTools
 
 
-def get_search_tools() -> TavilyTools:
-    """Return configured Tavily search tools.
+def get_search_tools() -> ResilientTavilyTools:
+    """Return Tavily search tools with retry and circuit breaker.
 
     Used by the Research Agent to find general news, negative news,
     lawsuits, and regulatory information about companies.
     """
-    return TavilyTools()
+    return ResilientTavilyTools()

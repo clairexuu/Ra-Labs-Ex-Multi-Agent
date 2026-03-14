@@ -1,4 +1,46 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# --- Allowed values for constrained enum-like fields ---
+SEVERITY_VALUES = {"HIGH", "MEDIUM", "LOW"}
+RECOMMENDATION_VALUES = {"BUY", "HOLD", "SELL"}
+CONFIDENCE_VALUES = {"HIGH", "MEDIUM", "LOW"}
+RISK_CATEGORY_VALUES = {"MARKET", "COMPANY_SPECIFIC", "SECTOR", "MACRO", "REGULATORY"}
+
+# Common LLM variations of category names
+_CATEGORY_ALIASES: dict[str, str] = {
+    "COMPANY-SPECIFIC": "COMPANY_SPECIFIC",
+    "COMPANY SPECIFIC": "COMPANY_SPECIFIC",
+    "COMPANYSPECIFIC": "COMPANY_SPECIFIC",
+}
+
+
+def _normalize_enum(
+    value: str, allowed: set[str], aliases: dict[str, str] | None = None
+) -> str:
+    """Normalize a string to match allowed enum values.
+
+    Auto-corrects casing and common formatting variations before rejecting.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"Expected string, got {type(value)}")
+
+    upper = value.strip().upper()
+
+    # Direct match after uppercasing
+    if upper in allowed:
+        return upper
+
+    # Try alias lookup
+    if aliases and upper in aliases:
+        return aliases[upper]
+
+    # Try replacing hyphens/spaces with underscores
+    normalized = upper.replace("-", "_").replace(" ", "_")
+    if normalized in allowed:
+        return normalized
+
+    raise ValueError(f"'{value}' is not one of {sorted(allowed)}")
 
 
 class CompanyResearch(BaseModel):
@@ -73,13 +115,23 @@ class RiskFactor(BaseModel):
 
     category: str = Field(
         ...,
-        description="Risk category: market, company-specific, sector, or macro",
+        description="Risk category: MARKET, COMPANY_SPECIFIC, SECTOR, MACRO, or REGULATORY",
     )
     description: str = Field(..., description="Description of the risk")
-    severity: str = Field(..., description="high, medium, or low")
+    severity: str = Field(..., description="HIGH, MEDIUM, or LOW")
     affected_tickers: list[str] = Field(
         ..., description="Which tickers are affected"
     )
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def normalize_category(cls, v: str) -> str:
+        return _normalize_enum(v, RISK_CATEGORY_VALUES, _CATEGORY_ALIASES)
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def normalize_severity(cls, v: str) -> str:
+        return _normalize_enum(v, SEVERITY_VALUES)
 
 
 class RiskAssessment(BaseModel):
@@ -98,8 +150,13 @@ class RiskAssessment(BaseModel):
     )
     overall_confidence: str = Field(
         ...,
-        description="high, medium, or low confidence in the analysis",
+        description="HIGH, MEDIUM, or LOW confidence in the analysis",
     )
+
+    @field_validator("overall_confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, v: str) -> str:
+        return _normalize_enum(v, CONFIDENCE_VALUES)
 
 
 class CompanyDecision(BaseModel):
@@ -112,12 +169,22 @@ class CompanyDecision(BaseModel):
     )
     confidence: str = Field(
         ...,
-        description="Confidence in the recommendation: high, medium, or low",
+        description="Confidence in the recommendation: HIGH, MEDIUM, or LOW",
     )
     reasoning: str = Field(
         ...,
         description="Brief reasoning for the recommendation, weighing analysis against risks",
     )
+
+    @field_validator("recommendation", mode="before")
+    @classmethod
+    def normalize_recommendation(cls, v: str) -> str:
+        return _normalize_enum(v, RECOMMENDATION_VALUES)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, v: str) -> str:
+        return _normalize_enum(v, CONFIDENCE_VALUES)
 
 
 class InvestmentDecision(BaseModel):

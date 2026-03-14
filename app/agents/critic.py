@@ -37,5 +37,8 @@ def create_critic_agent() -> Agent:
             "Be thorough but fair - not every analysis is wrong.",
         ],
         output_schema=RiskAssessment,
+        retries=2,
+        delay_between_retries=2,
+        exponential_backoff=True,
         markdown=False,
     )

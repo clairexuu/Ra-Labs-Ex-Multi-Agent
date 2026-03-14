@@ -1,6 +1,7 @@
 """Tests for Pydantic models (typed state)."""
 
 import pytest
+from pydantic import ValidationError
 
 from app.models.schemas import (
     CompanyAnalysis,
@@ -114,8 +115,9 @@ class TestRiskAssessment:
         json_str = assessment.model_dump_json()
         parsed = RiskAssessment.model_validate_json(json_str)
         assert len(parsed.risks) == 1
-        assert parsed.risks[0].severity == "medium"
-        assert parsed.overall_confidence == "medium"
+        assert parsed.risks[0].severity == "MEDIUM"
+        assert parsed.risks[0].category == "MARKET"
+        assert parsed.overall_confidence == "MEDIUM"
 
 
 class TestInvestmentDecision:
@@ -157,4 +159,140 @@ class TestInvestmentDecision:
         assert parsed.top_pick == "NVDA"
         assert len(parsed.company_decisions) == 2
         assert parsed.company_decisions[0].recommendation == "BUY"
+        assert parsed.company_decisions[0].confidence == "HIGH"
+        assert parsed.company_decisions[1].confidence == "MEDIUM"
         assert len(parsed.key_conditions) == 3
+
+
+class TestEnumValidation:
+    """Test that enum-like fields are properly validated and normalized."""
+
+    # --- Severity ---
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            ("HIGH", "HIGH"),
+            ("high", "HIGH"),
+            ("High", "HIGH"),
+            ("medium", "MEDIUM"),
+            ("LOW", "LOW"),
+            ("  low  ", "LOW"),
+        ],
+    )
+    def test_severity_normalization(self, input_val, expected):
+        rf = RiskFactor(
+            category="MARKET",
+            description="test",
+            severity=input_val,
+            affected_tickers=["AAPL"],
+        )
+        assert rf.severity == expected
+
+    def test_severity_rejects_invalid(self):
+        with pytest.raises(ValidationError):
+            RiskFactor(
+                category="MARKET",
+                description="test",
+                severity="CRITICAL",
+                affected_tickers=["AAPL"],
+            )
+
+    # --- Recommendation ---
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            ("BUY", "BUY"),
+            ("buy", "BUY"),
+            ("Buy", "BUY"),
+            ("hold", "HOLD"),
+            ("sell", "SELL"),
+        ],
+    )
+    def test_recommendation_normalization(self, input_val, expected):
+        cd = CompanyDecision(
+            ticker="AAPL",
+            recommendation=input_val,
+            confidence="HIGH",
+            reasoning="test",
+        )
+        assert cd.recommendation == expected
+
+    def test_recommendation_rejects_invalid(self):
+        with pytest.raises(ValidationError):
+            CompanyDecision(
+                ticker="AAPL",
+                recommendation="STRONG_BUY",
+                confidence="HIGH",
+                reasoning="test",
+            )
+
+    # --- Confidence ---
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            ("HIGH", "HIGH"),
+            ("high", "HIGH"),
+            ("Medium", "MEDIUM"),
+            ("low", "LOW"),
+        ],
+    )
+    def test_confidence_normalization(self, input_val, expected):
+        cd = CompanyDecision(
+            ticker="AAPL",
+            recommendation="BUY",
+            confidence=input_val,
+            reasoning="test",
+        )
+        assert cd.confidence == expected
+
+    def test_confidence_rejects_invalid(self):
+        with pytest.raises(ValidationError):
+            CompanyDecision(
+                ticker="AAPL",
+                recommendation="BUY",
+                confidence="VERY_HIGH",
+                reasoning="test",
+            )
+
+    # --- Category ---
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            ("MARKET", "MARKET"),
+            ("market", "MARKET"),
+            ("COMPANY_SPECIFIC", "COMPANY_SPECIFIC"),
+            ("company-specific", "COMPANY_SPECIFIC"),
+            ("company specific", "COMPANY_SPECIFIC"),
+            ("sector", "SECTOR"),
+            ("MACRO", "MACRO"),
+            ("regulatory", "REGULATORY"),
+        ],
+    )
+    def test_category_normalization(self, input_val, expected):
+        rf = RiskFactor(
+            category=input_val,
+            description="test",
+            severity="HIGH",
+            affected_tickers=["AAPL"],
+        )
+        assert rf.category == expected
+
+    def test_category_rejects_invalid(self):
+        with pytest.raises(ValidationError):
+            RiskFactor(
+                category="GEOPOLITICAL",
+                description="test",
+                severity="HIGH",
+                affected_tickers=["AAPL"],
+            )
+
+    # --- Overall confidence in RiskAssessment ---
+    def test_risk_assessment_confidence_normalization(self):
+        ra = RiskAssessment(
+            risks=[],
+            assumptions_challenged=[],
+            data_gaps=[],
+            contrarian_view="test",
+            overall_confidence="medium",
+        )
+        assert ra.overall_confidence == "MEDIUM"

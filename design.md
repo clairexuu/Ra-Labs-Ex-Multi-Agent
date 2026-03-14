@@ -71,13 +71,6 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
 3. **Decision** — Coordinator delegates to Decision Agent, which receives the combined financial analysis and risk assessment (via `share_member_interactions=True`) and produces a typed `InvestmentDecision` with per-company BUY/HOLD/SELL recommendations, top pick, investment thesis, and key conditions
 4. **Final Memo** — Coordinator synthesizes all specialist outputs into a markdown investment memo, using the Decision Agent's recommendations as the basis for the Investment Decisions and Top Pick sections
 
-### Why Agno Team Coordinate Mode + Nested Broadcast
-
-- The Team coordinator acts as the **coordinating agent** and the **output/review step**, while 4 specialists handle research, analysis, risk review, and decision-making
-- `mode="coordinate"` on the outer team — the coordinator orchestrates which member to call and in what order
-- `mode="broadcast"` on the Analysis Team sub-team — Analyst and Critic receive the same task and run **concurrently** (via `asyncio.gather()` in the async path used by the Playground)
-- `share_member_interactions=True` on the outer team — each step sees the outputs of prior steps, so the Analysis Team receives the Research Agent's data and the Decision Agent receives all prior outputs
-- `share_member_interactions=False` on the Analysis Team — Analyst and Critic work independently from the same research data
 
 ## Tools
 
@@ -85,8 +78,9 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
 |------|--------|---------|---------|
 | **TavilyTools** | `app/tools/search.py` | Research Agent | Web search for company news, products, competitive position, lawsuits, regulatory issues |
 | **YFinanceTools** | `app/tools/finance.py` | Research Agent | Stock prices, market cap, P/E ratio, analyst recommendations, company info, financial news |
+| **TickerValidationTool** | `app/tools/ticker_validation.py` | Research Agent | Validates ticker symbols against YFinance before research begins |
 
-Both tools are configured in `app/tools/` and imported by the Research Agent. The Analyst and Critic agents have no tools — they perform pure reasoning on the research data passed to them by the coordinator.
+All tools are configured in `app/tools/` and imported by the Research Agent. Tavily and YFinance tools are wrapped with resilient subclasses (`ResilientTavilyTools`, `ResilientYFinanceTools` in `app/tools/resilient_wrappers.py`) that add retry with exponential backoff and a circuit breaker. The Analyst and Critic agents have no tools — they perform pure reasoning on the research data passed to them by the coordinator.
 
 ## Typed State (Pydantic Models)
 
@@ -112,11 +106,41 @@ All models use `output_schema` on the Agent to enforce structured output from th
 
 ## Resilience
 
-### Scenario 1: Missing/partial research data
-If YFinance or Tavily tools fail for a company (invalid ticker, API timeout, rate limit), the Research Agent's instructions say: *"If a tool call fails or returns no data for a company, note the data gap and continue with available information."* The Critic Agent will then flag these gaps in its risk assessment.
+### Scenario 1: Invalid structured output — auto-correcting validators
 
-### Scenario 2: Transient LLM/tool failure
-Agno's built-in retry mechanism is available on each agent. If a Gemini API call fails (rate limit, server error, timeout), Agno can automatically retry with exponential backoff. The Team coordinator handles member failures gracefully by noting which specialist could not complete their analysis.
+LLMs can return enum-like fields with inconsistent casing (e.g., `"medium"` vs `"MEDIUM"` vs `"Medium"`). All constrained fields — `severity`, `recommendation`, `confidence`, and `category` — have Pydantic `@field_validator(mode="before")` validators that **auto-correct** casing before the model is constructed. If the value doesn't match any allowed option even after normalization, Pydantic raises `ValidationError`, preventing malformed data from propagating downstream.
+
+**Implementation:** `app/models/schemas.py` defines `_normalize_enum()` and validators on `RiskFactor` (category, severity), `RiskAssessment` (overall_confidence), and `CompanyDecision` (recommendation, confidence). Allowed values: `BUY/HOLD/SELL`, `HIGH/MEDIUM/LOW`, `MARKET/COMPANY_SPECIFIC/SECTOR/MACRO/REGULATORY`.
+
+**Tests:** `TestEnumValidation` in `app/tests/test_schemas.py` — 28 parametrized tests covering case normalization, whitespace handling, alias resolution (e.g., `"company-specific"` → `"COMPANY_SPECIFIC"`), and rejection of invalid values.
+
+### Scenario 2: Transient LLM/tool failure — retry with exponential backoff + circuit breaker
+
+All four agents are configured with `retries=2, delay_between_retries=2, exponential_backoff=True` using Agno's built-in retry mechanism. If a Gemini API call fails (rate limit, server error, timeout), the agent automatically retries up to 2 additional times with exponential backoff (2s, 4s).
+
+At the tool level, both Tavily and YFinance tools are wrapped with **`ResilientTavilyTools`** and **`ResilientYFinanceTools`** (`app/tools/resilient_wrappers.py`). These subclasses wrap every registered tool entrypoint with:
+
+- **Retry with exponential backoff** (up to 3 attempts, 1s → 2s → 4s delays) — retries on both exceptions and error-string responses (e.g., `"Error fetching current price for XYZ"`)
+- **Circuit breaker** — after 3 consecutive failures for a tool, the breaker trips to OPEN state and returns a `"Service temporarily unavailable"` message immediately, preventing cascading failures. After a 60-second reset timeout, one probe request is allowed through (half-open state); if it succeeds, the breaker closes.
+
+All retry attempts and circuit breaker state changes are logged to stderr for real-time observability.
+
+**Implementation:** `app/tools/resilient_wrappers.py` (CircuitBreaker class, `_resilient_method` wrapper, `_is_error_response` detector). Tool factories in `app/tools/search.py` and `app/tools/finance.py` return the resilient subclasses.
+
+**Tests:** `TestCircuitBreaker`, `TestIsErrorResponse`, `TestResilientMethod`, `TestResilientToolsIntegration` in `app/tests/test_resilience.py` — 19 tests covering breaker lifecycle (closed → open → half-open → closed), error-string detection, retry behavior, and integration with the tool factories.
+
+### Scenario 3: Malformed user input — ticker validation
+
+If a user provides invalid ticker symbols (misspelled, delisted, or fictional), the Research Agent validates them **before** spending time and API credits on full research. A `TickerValidationTool` (`app/tools/ticker_validation.py`) checks each ticker against `yfinance.Ticker().info`:
+
+- **Valid tickers** (have a `shortName` in the YFinance response) proceed to research
+- **Invalid tickers** are reported back with a warning and suggestions (check spelling, exchange suffix like `.L` or `.TO`)
+- **Empty input** returns an error message asking for ticker symbols
+- If **all** tickers are invalid, the agent stops and reports the issue rather than producing a garbage memo
+
+**Implementation:** `TickerValidationTool` Agno Toolkit in `app/tools/ticker_validation.py`, added as the 3rd tool on the Research Agent. Instructions prepend a "STEP 0 — VALIDATE TICKERS" step before data gathering.
+
+**Tests:** `TestTickerValidationTool` in `app/tests/test_resilience.py` — 8 tests covering empty input, valid/invalid/mixed tickers (mocked YFinance), exception handling, and case normalization.
 
 ## File Structure
 
@@ -139,12 +163,15 @@ app/
     investment_team.py       # Team definition with coordinator
   tools/
     __init__.py
-    search.py                # DuckDuckGoTools configuration
-    finance.py               # YFinanceTools configuration
+    search.py                # Resilient Tavily search tools
+    finance.py               # Resilient YFinance tools
+    resilient_wrappers.py    # Retry + circuit breaker wrappers
+    ticker_validation.py     # Ticker symbol validation tool
   tests/
     __init__.py
-    test_schemas.py          # Pydantic model serialization tests
-    test_workflow.py         # Agent/Team creation tests
+    test_schemas.py          # Pydantic model serialization + validation tests
+    test_workflow.py         # Agent/Team creation + retry config tests
+    test_resilience.py       # Circuit breaker, retry, ticker validation tests
 data/
   examples/
     sample_memo.md           # Example output artifact
@@ -153,19 +180,6 @@ pyproject.toml               # Dependencies
 README.md                    # Project documentation
 design.md                    # This file
 ```
-
-## Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `agno` | Multi-agent framework (Team, Agent, Playground) |
-| `google-genai` | Gemini LLM provider (gemini-2.0-flash default) |
-| `yfinance` | Financial data: stock prices, analyst recommendations, company info |
-| `tavily-python` | Web search for news, lawsuits, regulatory info |
-| `pydantic>=2.0` | Typed state models for agent inputs/outputs |
-| `python-dotenv` | Environment variable management |
-| `sqlalchemy` | Agno SQLite storage backend |
-| `fastapi[standard]` | Agno Playground server |
 
 ## How to Run
 
@@ -221,26 +235,4 @@ The coordinator will delegate to Research → Analysis Team (Analyst + Critic in
 pytest app/tests/ -v
 ```
 
-Expected: 25 tests pass (6 schema tests + 6 agent/team creation tests + 13 observability tests).
-
-## Implementation Notes
-
-### Agno API Details (discovered during implementation)
-
-- Agent structured output uses `output_schema=` (not `response_model=`)
-- YFinanceTools parameters use `enable_` prefix: `enable_stock_price=True` (not `stock_price=True`)
-- Team has no `leader=` parameter — the Team itself is the coordinator; its `model` and `instructions` define the coordinator behavior
-- Agent does not accept `show_tool_calls=` — tool call visibility is controlled at the Team/Playground level
-- DuckDuckGo search requires the `ddgs` package in addition to `duckduckgo-search`
-
-### Design Decisions
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Orchestration | Agno Team coordinate mode + nested broadcast sub-team | Satisfies "real multi-agent pattern" requirement; coordinator is a genuine agent. Analyst + Critic run concurrently via a broadcast sub-team for reduced latency |
-| Model | Gemini 2.0 Flash | Free tier available, fast, good structured output support. Swappable via `MODEL_ID` env var |
-| Tools | Tavily + YFinance only | Exercise says 2-4 tools; these cover web search + financial data. Research Agent gathers all data for downstream agents |
-| Tool placement | Both tools on Research Agent only | Research Agent is the single data-gathering step. Analyst and Critic do pure reasoning on the research data |
-| Demo UX | Agno Playground | Preferred option per requirements. Shows team execution, member responses, and tool calls in a web UI |
-| Database | SQLite (local file) | No PostgreSQL setup needed. Sufficient for demo session persistence |
-| Scope | 5 agents (1 coordinator + 4 specialists), 2 tools, typed state, Playground demo | Per the "do not overbuild" guidance in the exercise |
+Expected: 88 tests pass (34 schema tests + 10 agent/team creation tests + 13 observability tests + 31 resilience tests).

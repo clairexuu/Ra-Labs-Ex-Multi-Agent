@@ -39,5 +39,8 @@ def create_analyst_agent() -> Agent:
             "If data is missing for a company, acknowledge the gap and work with what is available.",
         ],
         output_schema=FinancialAnalysis,
+        retries=2,
+        delay_between_retries=2,
+        exponential_backoff=True,
         markdown=False,
     )

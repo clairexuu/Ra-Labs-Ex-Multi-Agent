@@ -48,5 +48,8 @@ def create_decision_agent() -> Agent:
             "If data gaps exist, acknowledge them but still make a decision with the available information.",
         ],
         output_schema=InvestmentDecision,
+        retries=2,
+        delay_between_retries=2,
+        exponential_backoff=True,
         markdown=False,
     )

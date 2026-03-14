@@ -3,6 +3,7 @@ from agno.agent import Agent
 from app.config import get_model
 from app.tools.finance import get_finance_tools
 from app.tools.search import get_search_tools
+from app.tools.ticker_validation import TickerValidationTool
 
 
 def create_research_agent() -> Agent:
@@ -21,10 +22,19 @@ def create_research_agent() -> Agent:
             "information for a set of companies in a given sector."
         ),
         model=get_model(),
-        tools=[get_search_tools(), get_finance_tools()],
+        tools=[get_search_tools(), get_finance_tools(), TickerValidationTool()],
         instructions=[
             "You are a financial research specialist.",
-            "For each company ticker provided, gather comprehensive data using your tools.",
+            "",
+            "STEP 0 - VALIDATE TICKERS:",
+            "Before gathering any research data, ALWAYS use the validate_tickers tool "
+            "to verify that the requested ticker symbols are valid.",
+            "If any tickers are invalid, report the invalid tickers in your response "
+            "with the suggestion to check the ticker symbol.",
+            "Continue researching only the valid tickers.",
+            "If ALL tickers are invalid, stop and report the issue.",
+            "",
+            "For each VALID company ticker, gather comprehensive data using your tools.",
             "",
             "Use YFinance tools to collect:",
             "- Current stock price and market capitalization",
@@ -43,5 +53,8 @@ def create_research_agent() -> Agent:
             "",
             "Include today's date as the research_date.",
         ],
+        retries=2,
+        delay_between_retries=2,
+        exponential_backoff=True,
         markdown=False,
     )

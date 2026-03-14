@@ -16,7 +16,7 @@ class TestAgentCreation:
         agent = create_research_agent()
         assert isinstance(agent, Agent)
         assert agent.name == "Research Agent"
-        assert len(agent.tools) == 2  # DuckDuckGo + YFinance
+        assert len(agent.tools) == 3  # Tavily + YFinance + TickerValidation
 
     def test_analyst_agent_creates_successfully(self):
         agent = create_analyst_agent()
@@ -32,6 +32,24 @@ class TestAgentCreation:
         agent = create_decision_agent()
         assert isinstance(agent, Agent)
         assert agent.name == "Decision Agent"
+
+    def test_analyst_agent_has_retry_config(self):
+        agent = create_analyst_agent()
+        assert agent.retries == 2
+        assert agent.exponential_backoff is True
+        assert agent.delay_between_retries == 2
+
+    def test_critic_agent_has_retry_config(self):
+        agent = create_critic_agent()
+        assert agent.retries == 2
+        assert agent.exponential_backoff is True
+        assert agent.delay_between_retries == 2
+
+    def test_decision_agent_has_retry_config(self):
+        agent = create_decision_agent()
+        assert agent.retries == 2
+        assert agent.exponential_backoff is True
+        assert agent.delay_between_retries == 2
 
 
 class TestTeamCreation:

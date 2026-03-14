@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv",
     "sqlalchemy",
     "fastapi[standard]",
+    "tenacity",
 ]
 
 [project.optional-dependencies]
