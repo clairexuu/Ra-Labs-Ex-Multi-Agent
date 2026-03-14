@@ -9,6 +9,8 @@ from https://app.agno.com/playground to localhost:7777.
 Demo prompts:
     "Analyze NVDA, AMD, and INTC in the Semiconductors sector"
     "Analyze Anthropic, OpenAI, and Cohere in the AI sector"
+    "Find 3 AI startups in autonomous driving and compare them"
+    "Search for 4 public companies in cloud computing and compare"
 """
 
 from agno.os import AgentOS

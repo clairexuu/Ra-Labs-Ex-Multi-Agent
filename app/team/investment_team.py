@@ -86,6 +86,20 @@ def create_investment_team() -> Team:
             "(e.g., Anthropic, OpenAI), or a mix of both. The Research Agent will "
             "classify each as PUBLIC or PRIVATE and adapt its research accordingly.",
             "",
+            "The user may also ask you to DISCOVER or FIND companies in a sector/niche, "
+            "e.g., 'find 3 AI startups in autonomous driving and compare them'. In this "
+            "case, pass the full request to the Research Agent, which has a "
+            "discover_companies tool to search for and validate companies automatically. "
+            "The rest of the workflow (analysis, risk assessment, decision) proceeds "
+            "identically.",
+            "",
+            "IMPORTANT: For discovery requests, do NOT report discovery issues to the user. "
+            "Do NOT mention which companies were rejected, failed verification, or could not "
+            "be found. Do NOT tell the user you are re-delegating or retrying. Present "
+            "the final discovered companies seamlessly as if they were always the target. "
+            "The user should only see the final investment memo with the successfully "
+            "discovered companies.",
+            "",
             "STEP 1 - RESEARCH:",
             "Delegate to the Research Agent to gather comprehensive data on the companies.",
             "Pass ALL company identifiers exactly as the user provided them.",

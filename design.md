@@ -66,7 +66,10 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
 
 ### Execution Flow
 
-1. **Research** — Coordinator delegates to Research Agent, which uses Tavily + YFinance tools to gather comprehensive data on each company (general info, financials, news, negative news/lawsuits/regulatory issues)
+The system supports two entry modes: **direct** (user provides company names/tickers) and **discovery** (user asks to find companies in a sector/niche). Both converge into the same downstream pipeline.
+
+0. **Discovery** *(optional)* — If the user asks to find or discover companies (e.g., "find 3 AI startups in autonomous driving"), the Research Agent uses its `discover_companies` tool to search Tavily for companies in the sector, extract candidate names from search results, classify each as PUBLIC or PRIVATE via YFinance, verify private companies, and filter by the requested type. Discovery failures (rejected candidates, unverified companies) are handled silently — neither the Research Agent nor the Coordinator reports them to the user. The successfully discovered companies then enter the standard pipeline below as if the user had named them explicitly.
+1. **Research** — Coordinator delegates to Research Agent, which classifies companies via `validate_companies` (or uses the already-classified results from discovery), then gathers comprehensive data using Tavily + YFinance for public companies and Tavily-only for private companies (general info, financials, news, negative news/lawsuits/regulatory issues)
 2. **Parallel Analysis** — Coordinator delegates to the Analysis Team (a `TeamMode.broadcast` sub-team), which runs Analyst Agent and Critic Agent **concurrently**. Both receive the research data (via `share_member_interactions=True` on the outer team) and produce their specialized outputs in parallel: `FinancialAnalysis` and `RiskAssessment`
 3. **Decision** — Coordinator delegates to Decision Agent, which receives the combined financial analysis and risk assessment (via `share_member_interactions=True`) and produces a typed `InvestmentDecision` with per-company BUY/HOLD/SELL recommendations, top pick, investment thesis, and key conditions
 4. **Final Memo** — Coordinator synthesizes all specialist outputs into a markdown investment memo, using the Decision Agent's recommendations as the basis for the Investment Decisions and Top Pick sections
@@ -78,7 +81,7 @@ This project implements the **Investment Team** track of the Agno multi-agent ta
 |------|--------|---------|---------|
 | **TavilyTools** | `app/tools/search.py` | Research Agent | Web search for company news, products, competitive position, lawsuits, regulatory issues |
 | **YFinanceTools** | `app/tools/finance.py` | Research Agent | Stock prices, market cap, P/E ratio, analyst recommendations, company info, financial news |
-| **CompanyValidationTool** | `app/tools/ticker_validation.py` | Research Agent | Classifies identifiers as public (via YFinance) or private companies, verifies private companies via Tavily web search with confidence scoring |
+| **CompanyValidationTool** | `app/tools/ticker_validation.py` | Research Agent | Classifies identifiers as public (via YFinance) or private companies, verifies private companies via Tavily web search with confidence scoring. Also discovers companies in a sector/niche when users don't provide specific names |
 
 All tools are configured in `app/tools/` and imported by the Research Agent. Tavily and YFinance tools are wrapped with resilient subclasses (`ResilientTavilyTools`, `ResilientYFinanceTools` in `app/tools/resilient_wrappers.py`) that add retry with exponential backoff and a circuit breaker. The Analyst and Critic agents have no tools — they perform pure reasoning on the research data passed to them by the coordinator.
 
@@ -162,6 +165,36 @@ Based on the confidence score, each private company receives a verification stat
 
 **Tests:** `TestCompanyValidationTool` in `app/tests/test_resilience.py` — 11 tests covering empty input, public tickers, private companies, mixed inputs, fuzzy name resolution, typo correction, non-equity filtering, case normalization, and exception handling. `app/tests/test_verification.py` — 19 tests covering confidence computation, verification statuses (verified/unverified/search-failed), schema validation for `company_type` and `verification_status` fields, and integration scenarios with mixed verified/unverified companies.
 
+### Scenario 4: Company discovery — sector-based search with name extraction & filtering
+
+Users can ask the system to **discover** companies in a sector or niche (e.g., "find 3 AI startups in autonomous driving") instead of providing explicit names. The `discover_companies` tool on `CompanyValidationTool` handles the full pipeline:
+
+**Stage 1 — Search:**
+A year-biased Tavily query surfaces recent, active companies. The query includes year keywords (e.g., `"best autonomous driving startups 2025 2024 funding raised active"` for private, `"top semiconductor stocks best performing companies 2025 2024"` for public) to bias results toward listicle articles that naturally feature thriving, well-funded companies rather than defunct ones.
+
+**Stage 2 — Extract candidate names:**
+Company names are extracted from Tavily's AI-generated answer text and result titles using a regex heuristic that matches capitalized multi-word phrases (e.g., `"Aurora Innovation"`, `"Nuro"`). Extraction includes:
+- **Weighted scoring** — names from the answer text receive 2× weight vs. names from titles (1×), so the AI summary's top picks rank higher
+- **Stop-word filtering** — generic terms (`"Top"`, `"Leading"`, `"Startup"`, `"IPO"`, `"CEO"`, etc.) are stripped from trailing positions to avoid false matches like `"Aurora Innovation IPO"`
+- **Deduplication** — separate `seen_names` and `seen_tickers` sets prevent the same company from appearing twice (e.g., when `"NVIDIA"` matches both as a name and a ticker)
+- **Count clamping** — the requested count is capped at `MAX_DISCOVERY_COUNT = 10` to prevent excessive API usage
+
+**Stage 3 — Classify & filter:**
+Each candidate name is run through the same `_resolve_identifier` pipeline used by `validate_companies` (direct ticker lookup → fuzzy YFinance search). Companies are classified as PUBLIC or PRIVATE. If the user requested `company_type="PRIVATE"`, public companies are filtered out (and vice versa).
+
+**Stage 4 — Verify private companies:**
+Private candidates go through the same Tavily verification pipeline as Scenario 3 (confidence scoring with result count, relevance, name match, and source quality signals). Only VERIFIED companies are included in the final output.
+
+**Silent failure handling:**
+Both the Research Agent and Coordinator are instructed to **never report discovery failures to the user**. Rejected candidates, unverified companies, defunct companies, and re-delegation attempts are handled silently. The user sees only the final investment memo with the successfully discovered companies, presented as if they were always the target.
+
+**Implementation:** `discover_companies` method and `_extract_company_names` helper in `app/tools/ticker_validation.py`. Discovery instructions in STEP 0a of `app/agents/research.py` and the coordinator instructions in `app/team/investment_team.py`.
+
+**Tests:** `app/tests/test_discovery.py` — 21 tests across three classes:
+- `TestExtractCompanyNames` (7 tests) — answer text extraction, title extraction, weight ranking, deduplication, stop-word exclusion, empty input, max count clamping
+- `TestDiscoverCompanies` (12 tests) — private discovery, public discovery, output format compatibility with `validate_companies`, no results, count clamping, invalid count, invalid company type, missing API key, fewer-than-requested note, Tavily failure, metadata output, public-company filtering for PRIVATE requests
+- `TestDiscoverCompaniesRegistration` (2 tests) — both `validate_companies` and `discover_companies` are registered as tool methods
+
 ## File Structure
 
 ```
@@ -186,12 +219,13 @@ app/
     search.py                # Resilient Tavily search tools
     finance.py               # Resilient YFinance tools
     resilient_wrappers.py    # Retry + circuit breaker wrappers
-    ticker_validation.py     # Ticker symbol validation tool
+    ticker_validation.py     # Ticker validation + company discovery tool
   tests/
     __init__.py
     test_schemas.py          # Pydantic model serialization + validation tests
     test_workflow.py         # Agent/Team creation + retry config tests
     test_resilience.py       # Circuit breaker, retry, ticker validation tests
+    test_discovery.py        # Company discovery + name extraction tests
 data/
   examples/
     sample_memo.md           # Example output artifact
@@ -241,13 +275,17 @@ npm run dev
 
 4. Open **http://localhost:3000** in your browser. On the left panel under "Mode", select "Team", then select "Investment Team". Ready to Chat. 
 
-### Demo Prompt
+### Demo Prompts
 
-Enter this in the Playground chat:
+Enter one of these in the Playground chat:
 
 > Analyze NVDA, AMD, and INTC in the Semiconductors sector and produce an investment memo
 
-The coordinator will delegate to Research → Analysis Team (Analyst + Critic in parallel) → Decision, then synthesize the final memo. Each specialist's work is visible in the UI.
+> Find 3 AI startups in autonomous driving and compare them
+
+> Search for 4 public companies in cloud computing and compare
+
+The first prompt uses direct company identifiers. The second and third use the **discovery** feature — the Research Agent searches for companies in the sector, classifies and verifies them, then proceeds with the standard pipeline. The coordinator will delegate to Research → Analysis Team (Analyst + Critic in parallel) → Decision, then synthesize the final memo. Each specialist's work is visible in the UI.
 
 ### Run Tests
 
@@ -259,4 +297,4 @@ pytest app/tests/ -v -m "not e2e"
 pytest app/tests/test_e2e.py -v -s
 ```
 
-Expected: 131 tests pass (51 schema tests + 9 agent/team creation tests + 13 observability tests + 35 resilience tests + 23 verification tests).
+Expected: 152 tests pass (51 schema tests + 9 agent/team creation tests + 13 observability tests + 35 resilience tests + 23 verification tests + 21 discovery tests).

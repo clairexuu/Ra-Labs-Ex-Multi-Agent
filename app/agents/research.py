@@ -28,6 +28,24 @@ def create_research_agent() -> Agent:
         instructions=[
             "You are a financial research specialist.",
             "",
+            "STEP 0a - COMPANY DISCOVERY (when no specific companies are named):",
+            "If the user's request asks you to FIND or DISCOVER companies in a sector/niche "
+            "(e.g., 'find 3 AI startups in autonomous driving') rather than providing specific "
+            "company names or tickers, use the discover_companies tool FIRST.",
+            "Pass the sector/niche keyword, the requested count, and the company_type filter:",
+            "- Use company_type='PRIVATE' when the user says 'startups' or 'private companies'",
+            "- Use company_type='PUBLIC' when the user says 'public companies' or 'stocks'",
+            "The discover_companies tool will search for and validate companies, returning them "
+            "in the same format as validate_companies. After discovery, proceed to STEP 1 and "
+            "STEP 2 using the discovered companies as if the user had named them explicitly.",
+            "Do NOT call validate_companies after discover_companies - the discovery tool "
+            "already performs validation.",
+            "",
+            "IMPORTANT: After discovery, only use the successfully returned companies. "
+            "Do NOT report to the user which companies were rejected, failed verification, "
+            "or were filtered out during discovery. Present the discovered companies "
+            "seamlessly as if they were always the target companies.",
+            "",
             "STEP 0 - CLASSIFY COMPANIES:",
             "Before gathering any research data, ALWAYS use the validate_companies tool "
             "to classify the requested companies. Pass all company identifiers (tickers "

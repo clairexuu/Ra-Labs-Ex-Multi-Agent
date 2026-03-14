@@ -1,7 +1,10 @@
-"""Company validation tool for classifying inputs as public or private companies."""
+"""Company validation and discovery tool for classifying and finding companies."""
 
+import contextlib
+import io
 import json
 import os
+import re
 import sys
 from typing import Any
 from urllib.parse import urlparse
@@ -34,18 +37,36 @@ _REPUTABLE_DOMAINS = frozenset(
 )
 
 DEFAULT_VERIFICATION_THRESHOLD = 0.4
+MAX_DISCOVERY_COUNT = 10
+
+# Words to ignore when extracting company names from search results
+_DISCOVERY_STOP_WORDS = frozenset(
+    {
+        "ai", "the", "top", "best", "leading", "emerging", "new", "most",
+        "largest", "biggest", "fastest", "growing", "innovative",
+        "startup", "startups", "company", "companies", "firm", "firms",
+        "inc", "corp", "corporation", "llc", "ltd", "co",
+        "stock", "stocks", "share", "shares", "market", "markets",
+        "sector", "industry", "publicly", "traded", "private", "public",
+        "investment", "venture", "capital", "fund", "funds",
+        "technology", "technologies", "tech", "solutions", "services",
+        "group", "holdings", "global", "international", "world",
+        "here", "are", "some", "list", "these", "this", "that",
+        "key", "major", "notable", "important", "popular",
+        "ipo", "ceo", "cto", "cfo", "coo",
+    }
+)
 
 
 class CompanyValidationTool(Toolkit):
-    """Validates and classifies company identifiers.
+    """Validates, classifies, and discovers company identifiers.
 
-    For each input, determines whether it is:
-    - A valid public company ticker (verified via YFinance)
-    - A private company name (not found on YFinance)
+    Provides two main capabilities:
+    - validate_companies: Classify known company names/tickers as public or private
+    - discover_companies: Search for companies in a sector/niche via web search
 
-    Private companies are further verified via Tavily web search.
-    A confidence score gates whether the company is marked VERIFIED
-    or UNVERIFIED.
+    Private companies are verified via Tavily web search with a confidence
+    score that gates VERIFIED vs. UNVERIFIED status.
     """
 
     def __init__(
@@ -56,7 +77,7 @@ class CompanyValidationTool(Toolkit):
     ) -> None:
         super().__init__(
             name="company_validation",
-            tools=[self.validate_companies],
+            tools=[self.validate_companies, self.discover_companies],
             **kwargs,
         )
         self._tavily = tavily_client
@@ -82,10 +103,23 @@ class CompanyValidationTool(Toolkit):
     # YFinance lookup helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_plausible_ticker(symbol: str) -> bool:
+        """Return True if *symbol* looks like a real ticker symbol.
+
+        Rejects strings with spaces, longer than 10 chars, or containing
+        characters outside [A-Z0-9.-] — which filters out full phrases
+        the LLM sometimes passes (e.g. "TOP SELF DRIVING CAR").
+        """
+        return bool(symbol) and len(symbol) <= 10 and re.fullmatch(r"[A-Z0-9.\-]+", symbol) is not None
+
     def _try_direct_ticker(self, symbol: str) -> dict[str, str] | None:
         """Try looking up a symbol directly as a ticker on YFinance."""
+        if not self._is_plausible_ticker(symbol):
+            return None
         try:
-            info = yf.Ticker(symbol).info
+            with contextlib.redirect_stderr(io.StringIO()):
+                info = yf.Ticker(symbol).info
             if info and info.get("shortName"):
                 return {
                     "ticker": symbol,
@@ -100,9 +134,10 @@ class CompanyValidationTool(Toolkit):
     def _search_by_name(self, name: str) -> dict[str, str] | None:
         """Search YFinance by company name with fuzzy matching."""
         try:
-            search = yf.Search(
-                name, max_results=5, enable_fuzzy_query=True, news_count=0
-            )
+            with contextlib.redirect_stderr(io.StringIO()):
+                search = yf.Search(
+                    name, max_results=5, enable_fuzzy_query=True, news_count=0
+                )
             for quote in search.quotes:
                 if quote.get("quoteType") == "EQUITY":
                     symbol = quote.get("symbol", "")
@@ -254,7 +289,58 @@ class CompanyValidationTool(Toolkit):
             }
 
     # ------------------------------------------------------------------
-    # Main tool method
+    # Company name extraction helpers
+    # ------------------------------------------------------------------
+
+    def _extract_company_names(
+        self,
+        results: list[dict],
+        answer_text: str | None,
+        max_names: int,
+    ) -> list[str]:
+        """Extract likely company names from Tavily search results.
+
+        Parses the AI-generated answer text (most structured) and result
+        titles to find capitalized phrases that look like company names.
+        Deduplicates and filters out generic terms.
+        """
+        candidates: dict[str, int] = {}  # lowercase -> score
+        display: dict[str, str] = {}  # lowercase -> original casing
+
+        sources: list[tuple[str, int]] = []
+        if answer_text:
+            sources.append((answer_text, 2))
+        for r in results:
+            sources.append((r.get("title", ""), 1))
+
+        for text, weight in sources:
+            # Find capitalized phrases (1-4 words starting with uppercase).
+            # Allow dots only when followed by letters (for names like Pony.ai).
+            for match in re.finditer(
+                r"\b([A-Z][a-zA-Z&'-]*(?:\.[a-zA-Z]+)*"
+                r"(?:\s+[A-Z][a-zA-Z&'-]*(?:\.[a-zA-Z]+)*){0,3})\b",
+                text,
+            ):
+                name = match.group(1).strip()
+                if len(name) < 2:
+                    continue
+                # Strip trailing stop words from multi-word matches
+                words = name.split()
+                while len(words) > 1 and words[-1].lower() in _DISCOVERY_STOP_WORDS:
+                    words.pop()
+                name = " ".join(words)
+                # Skip if every remaining word is a stop word
+                if all(w.lower() in _DISCOVERY_STOP_WORDS for w in words):
+                    continue
+                key = name.lower()
+                display.setdefault(key, name)
+                candidates[key] = candidates.get(key, 0) + weight
+
+        ranked = sorted(candidates, key=lambda k: candidates[k], reverse=True)
+        return [display[k] for k in ranked[:max_names]]
+
+    # ------------------------------------------------------------------
+    # Main tool methods
     # ------------------------------------------------------------------
 
     def validate_companies(self, identifiers: str) -> str:
@@ -348,6 +434,198 @@ class CompanyValidationTool(Toolkit):
             result["note"] = (
                 f"The following are classified as private companies: {names}. "
                 "Use web search (Tavily) instead of YFinance for data gathering."
+            )
+
+        return json.dumps(result, indent=2)
+
+    def discover_companies(
+        self, sector: str, count: str, company_type: str
+    ) -> str:
+        """Discover companies in a sector or niche via web search.
+
+        Searches for companies matching the given sector/niche and validates
+        them. Use this when the user asks to FIND or DISCOVER companies
+        rather than providing specific company names.
+
+        Args:
+            sector: The sector, niche, or industry to search
+                    (e.g., "autonomous driving", "synthetic biology")
+            count: Number of companies to discover (e.g., "3")
+            company_type: "PUBLIC" for publicly traded companies,
+                          "PRIVATE" for startups/private companies
+
+        Returns:
+            JSON with discovered companies in the same format as
+            validate_companies, plus discovery_query metadata.
+        """
+        # Parse and clamp count
+        try:
+            n = min(int(count), MAX_DISCOVERY_COUNT)
+            if n < 1:
+                n = 1
+        except (ValueError, TypeError):
+            return json.dumps(
+                {
+                    "error": (
+                        f"Invalid count '{count}'. "
+                        f"Provide a positive integer (e.g., '3')."
+                    ),
+                    "public_companies": [],
+                    "private_companies": [],
+                }
+            )
+
+        ct = company_type.strip().upper()
+        if ct not in ("PUBLIC", "PRIVATE"):
+            return json.dumps(
+                {
+                    "error": (
+                        f"Invalid company_type '{company_type}'. "
+                        f"Must be PUBLIC or PRIVATE."
+                    ),
+                    "public_companies": [],
+                    "private_companies": [],
+                }
+            )
+
+        client = self._get_tavily_client()
+        if client is None:
+            return json.dumps(
+                {
+                    "error": (
+                        "Cannot discover companies: "
+                        "TAVILY_API_KEY not configured."
+                    ),
+                    "public_companies": [],
+                    "private_companies": [],
+                }
+            )
+
+        # Build search query biased toward active, thriving companies
+        if ct == "PRIVATE":
+            query = f"best {sector} startups 2025 2024 funding raised active"
+        else:
+            query = f"top {sector} stocks best performing companies 2025 2024"
+
+        try:
+            response = client.search(
+                query=query,
+                search_depth="basic",
+                max_results=10,
+                include_answer=True,
+            )
+        except Exception as exc:
+            print(
+                f"[company-discovery] Tavily search failed for "
+                f"'{sector}': {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return json.dumps(
+                {
+                    "error": f"Discovery search failed for '{sector}': {exc}",
+                    "public_companies": [],
+                    "private_companies": [],
+                }
+            )
+
+        results = response.get("results", [])
+        answer_text = response.get("answer")
+
+        # Extract candidate names (request extra for filtering)
+        candidates = self._extract_company_names(results, answer_text, n * 3)
+
+        if not candidates:
+            return json.dumps(
+                {
+                    "error": (
+                        f"No companies found for sector '{sector}'. "
+                        f"Try a different or broader search term."
+                    ),
+                    "public_companies": [],
+                    "private_companies": [],
+                    "discovery_query": {
+                        "sector": sector,
+                        "requested_count": n,
+                        "company_type_filter": ct,
+                    },
+                }
+            )
+
+        # Validate each candidate
+        public: list[dict[str, str]] = []
+        private: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+        seen_tickers: set[str] = set()
+
+        for name in candidates:
+            if len(public) + len(private) >= n:
+                break
+
+            key = name.lower()
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+
+            resolved = self._resolve_identifier(name)
+
+            if ct == "PUBLIC":
+                if resolved:
+                    ticker_key = resolved["ticker"].lower()
+                    if ticker_key not in seen_tickers:
+                        seen_tickers.add(ticker_key)
+                        public.append(resolved)
+            else:  # PRIVATE
+                if resolved:
+                    # Actually a public company — skip
+                    continue
+                verification = self._verify_company_exists(name)
+                if verification["verification_status"] == "VERIFIED":
+                    entry: dict[str, Any] = {
+                        "company_name": name,
+                        "company_type": "PRIVATE",
+                        "reason": (
+                            f"Discovered '{name}' in '{sector}' sector. "
+                            f"Verified as a real company via web search."
+                        ),
+                    }
+                    entry.update(verification)
+                    private.append(entry)
+
+        total = len(public) + len(private)
+
+        result: dict[str, Any] = {
+            "discovery_query": {
+                "sector": sector,
+                "requested_count": n,
+                "company_type_filter": ct,
+            },
+            "public_companies": public,
+            "private_companies": private,
+            "summary": {
+                "total": total,
+                "public_count": len(public),
+                "private_count": len(private),
+                "discovery_note": (
+                    f"Discovered {total} companies in "
+                    f"'{sector}' sector via web search."
+                ),
+            },
+        }
+
+        if total < n:
+            result["summary"]["discovery_note"] = (
+                f"Only found {total} of {n} requested companies "
+                f"in '{sector}' sector."
+            )
+
+        if private:
+            names = ", ".join(p["company_name"] for p in private)
+            result["note"] = (
+                f"The following are classified as private companies: "
+                f"{names}. "
+                "Use web search (Tavily) instead of YFinance for "
+                "data gathering."
             )
 
         return json.dumps(result, indent=2)
