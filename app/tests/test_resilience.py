@@ -1,4 +1,4 @@
-"""Tests for tool-level retry, circuit breaker, and ticker validation."""
+"""Tests for tool-level retry, circuit breaker, and company validation."""
 
 import json
 import time
@@ -213,58 +213,63 @@ class TestResilientToolsIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Ticker validation tool
+# Company validation tool
 # ---------------------------------------------------------------------------
-class TestTickerValidationTool:
+class TestCompanyValidationTool:
     def test_tool_instantiates(self):
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        assert "validate_tickers" in tool.functions
+        tool = CompanyValidationTool()
+        assert "validate_companies" in tool.functions
 
     def test_empty_input(self):
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        result = json.loads(tool.validate_tickers(""))
-        assert result["valid_tickers"] == []
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies(""))
+        assert result["public_companies"] == []
+        assert result["private_companies"] == []
         assert "error" in result
 
     def test_whitespace_only_input(self):
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        result = json.loads(tool.validate_tickers("  ,  , "))
-        assert result["valid_tickers"] == []
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("  ,  , "))
+        assert result["public_companies"] == []
+        assert result["private_companies"] == []
         assert "error" in result
 
     @patch("app.tools.ticker_validation.yf.Ticker")
-    def test_valid_ticker(self, mock_ticker_cls):
+    def test_public_ticker(self, mock_ticker_cls):
         mock_ticker_cls.return_value.info = {
             "shortName": "Apple Inc.",
             "exchange": "NMS",
         }
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        result = json.loads(tool.validate_tickers("AAPL"))
-        assert "AAPL" in result["valid_tickers"]
-        assert result["invalid_tickers"] == []
-        assert "warning" not in result
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("AAPL"))
+        assert len(result["public_companies"]) == 1
+        assert result["public_companies"][0]["ticker"] == "AAPL"
+        assert result["public_companies"][0]["company_type"] == "PUBLIC"
+        assert result["private_companies"] == []
 
     @patch("app.tools.ticker_validation.yf.Ticker")
-    def test_invalid_ticker(self, mock_ticker_cls):
+    def test_private_company(self, mock_ticker_cls):
         mock_ticker_cls.return_value.info = {}
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        result = json.loads(tool.validate_tickers("XYZFAKE"))
-        assert result["valid_tickers"] == []
-        assert "XYZFAKE" in result["invalid_tickers"]
-        assert "warning" in result
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("Anthropic"))
+        assert result["public_companies"] == []
+        assert len(result["private_companies"]) == 1
+        assert result["private_companies"][0]["company_type"] == "PRIVATE"
+        assert result["private_companies"][0]["company_name"] == "Anthropic"
+        assert "note" in result
 
     @patch("app.tools.ticker_validation.yf.Ticker")
-    def test_mixed_valid_invalid(self, mock_ticker_cls):
+    def test_mixed_public_private(self, mock_ticker_cls):
         def side_effect(symbol):
             mock = MagicMock()
             if symbol == "AAPL":
@@ -274,23 +279,25 @@ class TestTickerValidationTool:
             return mock
 
         mock_ticker_cls.side_effect = side_effect
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        result = json.loads(tool.validate_tickers("AAPL,FAKEXYZ"))
-        assert "AAPL" in result["valid_tickers"]
-        assert "FAKEXYZ" in result["invalid_tickers"]
-        assert "warning" in result
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("AAPL,Anthropic"))
+        assert len(result["public_companies"]) == 1
+        assert len(result["private_companies"]) == 1
+        assert result["summary"]["public_count"] == 1
+        assert result["summary"]["private_count"] == 1
+        assert "note" in result
 
     @patch("app.tools.ticker_validation.yf.Ticker")
-    def test_exception_handling(self, mock_ticker_cls):
+    def test_exception_classifies_as_private(self, mock_ticker_cls):
         mock_ticker_cls.side_effect = Exception("Network error")
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        result = json.loads(tool.validate_tickers("AAPL"))
-        assert "AAPL" in result["invalid_tickers"]
-        assert result["valid_tickers"] == []
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("Anthropic"))
+        assert len(result["private_companies"]) == 1
+        assert result["public_companies"] == []
 
     @patch("app.tools.ticker_validation.yf.Ticker")
     def test_normalizes_to_uppercase(self, mock_ticker_cls):
@@ -298,8 +305,8 @@ class TestTickerValidationTool:
             "shortName": "Apple Inc.",
             "exchange": "NMS",
         }
-        from app.tools.ticker_validation import TickerValidationTool
+        from app.tools.ticker_validation import CompanyValidationTool
 
-        tool = TickerValidationTool()
-        result = json.loads(tool.validate_tickers("aapl"))
-        assert "AAPL" in result["valid_tickers"]
+        tool = CompanyValidationTool()
+        result = json.loads(tool.validate_companies("aapl"))
+        assert result["public_companies"][0]["ticker"] == "AAPL"

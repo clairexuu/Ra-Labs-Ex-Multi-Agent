@@ -16,7 +16,7 @@ class TestAgentCreation:
         agent = create_research_agent()
         assert isinstance(agent, Agent)
         assert agent.name == "Research Agent"
-        assert len(agent.tools) == 3  # Tavily + YFinance + TickerValidation
+        assert len(agent.tools) == 3  # Tavily + YFinance + CompanyValidation
 
     def test_analyst_agent_creates_successfully(self):
         agent = create_analyst_agent()

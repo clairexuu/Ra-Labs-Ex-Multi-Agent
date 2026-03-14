@@ -6,8 +6,9 @@ Run with:
 Then open http://localhost:7777 in your browser, or connect
 from https://app.agno.com/playground to localhost:7777.
 
-Demo prompt:
+Demo prompts:
     "Analyze NVDA, AMD, and INTC in the Semiconductors sector"
+    "Analyze Anthropic, OpenAI, and Cohere in the AI sector"
 """
 
 from agno.os import AgentOS

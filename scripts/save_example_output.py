@@ -18,6 +18,12 @@ DEMO_PROMPT = (
     "and produce an investment memo"
 )
 
+# Alternative prompt for private companies:
+# DEMO_PROMPT = (
+#     "Analyze Anthropic, OpenAI, and Cohere in the AI sector "
+#     "and produce an investment memo"
+# )
+
 OUTPUT_PATH = Path("examples/sample_memo.md")
 
 

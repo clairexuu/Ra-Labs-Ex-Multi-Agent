@@ -21,14 +21,19 @@ DEMO_PROMPT = (
     "and produce an investment memo"
 )
 
+PRIVATE_COMPANY_PROMPT = (
+    "Analyze Anthropic, OpenAI, and Cohere in the AI sector "
+    "and produce an investment memo"
+)
+
 MAX_ATTEMPTS = 2
 
 
-def _run_with_retry():
+def _run_with_retry(prompt):
     """Run the workflow, retrying once on transient LLM errors."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         team = create_investment_team()
-        result = team.run(DEMO_PROMPT)
+        result = team.run(prompt)
         if result.status != RunStatus.error:
             return result
         print(
@@ -44,7 +49,7 @@ class TestInvestmentTeamE2E:
     @pytest.fixture(scope="class")
     def result(self):
         """Run the workflow (with retry on transient LLM errors) once for all tests."""
-        return _run_with_retry()
+        return _run_with_retry(DEMO_PROMPT)
 
     def test_workflow_completes(self, result):
         """Team runs to completion without error."""
@@ -95,3 +100,51 @@ class TestInvestmentTeamE2E:
         assert m.total_tokens > 0
         assert m.input_tokens > 0
         assert m.output_tokens > 0
+
+
+@pytest.mark.e2e
+class TestPrivateCompanyE2E:
+
+    @pytest.fixture(scope="class")
+    def result(self):
+        """Run the workflow for private AI companies."""
+        return _run_with_retry(PRIVATE_COMPANY_PROMPT)
+
+    def test_workflow_completes(self, result):
+        """Team runs to completion without error."""
+        assert result.content is not None
+        assert len(result.content) > 500
+
+    def test_memo_has_required_sections(self, result):
+        """Final memo contains all sections from coordinator instructions."""
+        content = result.content
+        for heading in [
+            "Executive Summary",
+            "Company Overviews",
+            "Comparative Analysis",
+            "Risk Assessment",
+            "Investment Decisions",
+            "Top Pick",
+            "Open Questions",
+        ]:
+            assert heading.lower() in content.lower(), f"Missing section: {heading}"
+
+    def test_memo_mentions_all_companies(self, result):
+        """All requested companies appear in the output."""
+        for company in ["Anthropic", "OpenAI", "Cohere"]:
+            assert company in result.content
+
+    def test_all_agents_participated(self, result):
+        """All 4 specialist agents produced responses."""
+        from agno.run.team import TeamRunOutput
+
+        names = set()
+        for member in result.member_responses:
+            if isinstance(member, TeamRunOutput):
+                names.add(member.team_name)
+            else:
+                names.add(member.agent_name)
+
+        assert "Research Agent" in names
+        assert "Analysis Team" in names
+        assert "Decision Agent" in names

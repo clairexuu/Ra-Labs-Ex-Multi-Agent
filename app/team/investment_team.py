@@ -25,7 +25,7 @@ def create_investment_team() -> Team:
         - Analysis Team (broadcast sub-team): Runs Analyst + Critic in parallel
             - Analyst Agent (Specialist #2): Comparative financial analysis
             - Critic Agent (Specialist #3): Risk assessment and contrarian review
-        - Decision Agent (Specialist #4): BUY/HOLD/SELL decisions
+        - Decision Agent (Specialist #4): Investment decisions
 
     Execution flow:
         1. Coordinator delegates to Research Agent for data gathering
@@ -82,16 +82,22 @@ def create_investment_team() -> Team:
             "You are the Investment Committee Lead coordinating a team of specialists.",
             "When a user asks you to analyze companies, follow this workflow:",
             "",
+            "The user may provide stock tickers (e.g., NVDA, AMD), company names "
+            "(e.g., Anthropic, OpenAI), or a mix of both. The Research Agent will "
+            "classify each as PUBLIC or PRIVATE and adapt its research accordingly.",
+            "",
             "STEP 1 - RESEARCH:",
             "Delegate to the Research Agent to gather comprehensive data on the companies.",
-            "Ask the Research Agent to research each company's financials, news, products,",
-            "competitive position, and any negative news (lawsuits, regulatory issues, etc).",
+            "Pass ALL company identifiers exactly as the user provided them.",
+            "The Research Agent will classify companies as public or private and gather "
+            "appropriate data: financials via YFinance for public companies, and funding/"
+            "valuation data via web search for private companies.",
             "",
             "STEP 2 - PARALLEL ANALYSIS:",
             "After receiving the research data, delegate to the Analysis Team.",
             "The Analysis Team will run the Analyst Agent and Critic Agent in parallel.",
             "Ask it to analyze the research data: the Analyst should produce a comparative",
-            "financial analysis with strengths, weaknesses, valuation, growth outlook, and",
+            "analysis with strengths, weaknesses, valuation, growth outlook, and",
             "a top pick; the Critic should identify risks, challenge assumptions, find data",
             "gaps, and provide a contrarian view.",
             "Include the full research data in your delegation so both agents can access it.",
@@ -100,8 +106,9 @@ def create_investment_team() -> Team:
             "After receiving the combined analysis and risk assessment from the Analysis Team,",
             "delegate to the Decision Agent.",
             "Ask the Decision Agent to weigh the analyst's findings against the",
-            "critic's risks and produce explicit BUY/HOLD/SELL decisions for each",
-            "company, along with the overall top pick and investment thesis.",
+            "critic's risks and produce explicit investment decisions for each",
+            "company: BUY/HOLD/SELL for public companies, INVEST/PASS/WATCH for",
+            "private companies, along with the overall top pick and investment thesis.",
             "",
             "STEP 4 - FINAL MEMO:",
             "After receiving all specialist outputs, synthesize everything into",
@@ -112,12 +119,13 @@ def create_investment_team() -> Team:
             "## Company Overviews",
             "## Comparative Analysis",
             "## Risk Assessment",
-            "## Investment Decisions (use the Decision Agent's BUY/HOLD/SELL recommendations)",
+            "## Investment Decisions (use the Decision Agent's recommendations)",
             "## Top Pick and Thesis",
             "## Open Questions and Next Steps",
             "",
             "Use the Decision Agent's recommendations as the basis for the Investment Decisions",
             "and Top Pick sections. Do not override them - present them with the supporting evidence.",
+            "For private companies, include funding and valuation context instead of stock metrics.",
             "The memo should be concise and actionable.",
         ],
         show_members_responses=False,

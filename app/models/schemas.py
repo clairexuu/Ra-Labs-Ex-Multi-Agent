@@ -3,9 +3,10 @@ from pydantic import BaseModel, Field, field_validator
 
 # --- Allowed values for constrained enum-like fields ---
 SEVERITY_VALUES = {"HIGH", "MEDIUM", "LOW"}
-RECOMMENDATION_VALUES = {"BUY", "HOLD", "SELL"}
+RECOMMENDATION_VALUES = {"BUY", "HOLD", "SELL", "INVEST", "PASS", "WATCH"}
 CONFIDENCE_VALUES = {"HIGH", "MEDIUM", "LOW"}
 RISK_CATEGORY_VALUES = {"MARKET", "COMPANY_SPECIFIC", "SECTOR", "MACRO", "REGULATORY"}
+COMPANY_TYPE_VALUES = {"PUBLIC", "PRIVATE"}
 
 # Common LLM variations of category names
 _CATEGORY_ALIASES: dict[str, str] = {
@@ -46,14 +47,40 @@ def _normalize_enum(
 class CompanyResearch(BaseModel):
     """Research data for a single company, gathered by the Research Agent."""
 
-    ticker: str = Field(..., description="Stock ticker symbol")
     company_name: str = Field(..., description="Full company name")
+    company_type: str = Field(
+        "PUBLIC",
+        description="PUBLIC for publicly traded companies, PRIVATE for private companies",
+    )
+    ticker: str | None = Field(
+        None, description="Stock ticker symbol (None for private companies)"
+    )
     sector: str = Field(..., description="Industry sector")
+
+    # Public company fields (populated from YFinance)
     current_price: float | None = Field(None, description="Current stock price in USD")
     market_cap: str | None = Field(None, description="Market capitalization")
     pe_ratio: float | None = Field(None, description="Price-to-earnings ratio")
     revenue_growth: str | None = Field(None, description="Year-over-year revenue growth")
     analyst_consensus: str | None = Field(None, description="Analyst consensus rating")
+
+    # Private company fields (populated from web search)
+    latest_funding_round: str | None = Field(
+        None, description="Latest funding round (e.g., Series D, $2B)"
+    )
+    total_funding: str | None = Field(None, description="Total funding raised")
+    latest_valuation: str | None = Field(None, description="Latest known valuation")
+    key_investors: list[str] = Field(
+        default_factory=list, description="Key investors and backers"
+    )
+    estimated_revenue: str | None = Field(
+        None, description="Estimated annual revenue or ARR if available"
+    )
+    funding_stage: str | None = Field(
+        None, description="Current funding stage (Seed, Series A, etc.)"
+    )
+
+    # Shared fields
     recent_news: list[str] = Field(
         default_factory=list,
         description="3-5 recent news headlines (positive and negative)",
@@ -69,6 +96,11 @@ class CompanyResearch(BaseModel):
         description="Negative news: lawsuits, controversies, regulatory issues",
     )
 
+    @field_validator("company_type", mode="before")
+    @classmethod
+    def normalize_company_type(cls, v: str) -> str:
+        return _normalize_enum(v, COMPANY_TYPE_VALUES)
+
 
 class CompanyResearchSet(BaseModel):
     """Research data for all companies being evaluated."""
@@ -83,16 +115,23 @@ class CompanyResearchSet(BaseModel):
 class CompanyAnalysis(BaseModel):
     """Analysis of a single company by the Analyst Agent."""
 
-    ticker: str = Field(..., description="Stock ticker symbol")
+    company_name: str = Field(..., description="Company name or ticker symbol")
+    company_type: str = Field("PUBLIC", description="PUBLIC or PRIVATE")
     strengths: list[str] = Field(..., description="2-4 key strengths")
     weaknesses: list[str] = Field(..., description="2-4 key weaknesses")
     valuation_assessment: str = Field(
         ...,
-        description="Overvalued, fairly valued, or undervalued with reasoning",
+        description="For public: overvalued/fairly valued/undervalued. "
+        "For private: assessment of latest valuation relative to fundamentals.",
     )
     growth_outlook: str = Field(
         ..., description="Growth outlook for next 12-18 months"
     )
+
+    @field_validator("company_type", mode="before")
+    @classmethod
+    def normalize_company_type(cls, v: str) -> str:
+        return _normalize_enum(v, COMPANY_TYPE_VALUES)
 
 
 class FinancialAnalysis(BaseModel):
@@ -106,7 +145,7 @@ class FinancialAnalysis(BaseModel):
         ..., description="How companies compare to each other"
     )
     top_pick: str = Field(
-        ..., description="Ticker of the top pick with brief justification"
+        ..., description="Name or ticker of the top pick with brief justification"
     )
 
 
@@ -119,8 +158,8 @@ class RiskFactor(BaseModel):
     )
     description: str = Field(..., description="Description of the risk")
     severity: str = Field(..., description="HIGH, MEDIUM, or LOW")
-    affected_tickers: list[str] = Field(
-        ..., description="Which tickers are affected"
+    affected_companies: list[str] = Field(
+        ..., description="Which companies (by name or ticker) are affected"
     )
 
     @field_validator("category", mode="before")
@@ -162,10 +201,12 @@ class RiskAssessment(BaseModel):
 class CompanyDecision(BaseModel):
     """Investment decision for a single company."""
 
-    ticker: str = Field(..., description="Stock ticker symbol")
+    company_name: str = Field(..., description="Company name or ticker symbol")
+    company_type: str = Field("PUBLIC", description="PUBLIC or PRIVATE")
     recommendation: str = Field(
         ...,
-        description="Investment recommendation: BUY, HOLD, or SELL",
+        description="For public companies: BUY, HOLD, or SELL. "
+        "For private companies: INVEST, PASS, or WATCH.",
     )
     confidence: str = Field(
         ...,
@@ -175,6 +216,11 @@ class CompanyDecision(BaseModel):
         ...,
         description="Brief reasoning for the recommendation, weighing analysis against risks",
     )
+
+    @field_validator("company_type", mode="before")
+    @classmethod
+    def normalize_company_type(cls, v: str) -> str:
+        return _normalize_enum(v, COMPANY_TYPE_VALUES)
 
     @field_validator("recommendation", mode="before")
     @classmethod
@@ -192,10 +238,10 @@ class InvestmentDecision(BaseModel):
 
     sector: str = Field(..., description="Sector analyzed")
     company_decisions: list[CompanyDecision] = Field(
-        ..., description="BUY/HOLD/SELL decision for each company"
+        ..., description="Investment decision for each company"
     )
     top_pick: str = Field(
-        ..., description="Ticker of the overall top pick"
+        ..., description="Name or ticker of the overall top pick"
     )
     top_pick_justification: str = Field(
         ...,
